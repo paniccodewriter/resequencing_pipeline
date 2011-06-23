@@ -22,7 +22,7 @@ $infoHR->{'optHR'}    = {};
 
 
 # Read input and setup global variables
-GetOptions ($infoHR->{'optHR'}, 'fq1=s', 'fq2=s', 'fqS=s', 'outdir=s', 'sample=s', 'run=s', 'shm', 'help', 'verbose') or pod2usage(2);
+GetOptions ($infoHR->{'optHR'}, 'fq1=s', 'fq2=s', 'fqS=s', 'regions=s', 'outdir=s', 'sample=s', 'run=s', 'shm', 'help', 'verbose') or pod2usage(2);
 pod2usage(1) if $infoHR->{'optHR'}{'h'} or $infoHR->{'optHR'}{'help'};
 
 #print Dumper($infoHR);
@@ -80,6 +80,7 @@ sub checkInParameters {
   unless ( -f $infoHR->{'optHR'}{'fq1'} or -f $infoHR->{'optHR'}{'fq2'} or -f $infoHR->{'optHR'}{'fqS'} ) { pod2usage("Error: At lease one sequence data file must be submitted.") }
   if ( -f $infoHR->{'optHR'}{'fq1'} xor -f $infoHR->{'optHR'}{'fq2'} ) { pod2usage("Error: Both fq1 and fq2 must be present and match for paired end data.") }
   if ( -f $infoHR->{'optHR'}{'fqS'} ) { pod2usage("Error: Single end read processing not implremented yet.") }
+  unless ( -f $infoHR->{'optHR'}{'regions'} ) { pod2usage("Error: Please provide a regions file for coverage calculations.") }
 
   unless ( -d $infoHR->{'optHR'}{'outdir'} ) { pod2usage("Error: An existing output directory must be provided.") }
   unless ( $infoHR->{'optHR'}{'sample'} ) { pod2usage("Error: Please provide a sample name for the output name (output filenames will be based on the prefix).") }
@@ -113,13 +114,13 @@ sub setupDirStructure {
   $infoHR->{'analysis_dirs'}{'sbatch'} = createDirs("$infoHR->{'optHR'}{'outdir'}/sbatch");
   $infoHR->{'analysis_dirs'}{'sbatch-info'} = createDirs("$infoHR->{'optHR'}{'outdir'}/sbatch/info");
   $infoHR->{'analysis_dirs'}{'sbatch-cur'} = createDirs("$infoHR->{'optHR'}{'outdir'}/sbatch/current");
-  for my $basedir ('fastq', 'fastq_filter', 'mosaik', 'GATK', 'variants', 'annotation') {
+  for my $basedir ('fastq', 'fastq_filter', 'mosaik', 'GATK', 'variants', 'coverage', 'annotation') {
     $infoHR->{'analysis_dirs'}{$basedir} = createDirs("$infoHR->{'optHR'}{'outdir'}/$basedir");
     for my $subdir ('info', 'results') {
       $infoHR->{'analysis_dirs'}{$basedir . "-$subdir"} = createDirs("$infoHR->{'optHR'}{'outdir'}/$basedir/$subdir");
     }
   }
-  $infoHR->{'analysis_dirs'}{'GATK-intm'} = createDirs("$infoHR->{'optHR'}{'outdir'}/GATK/intermediary");
+  $infoHR->{'analysis_dirs'}{'GATK-intm'}          = createDirs("$infoHR->{'optHR'}{'outdir'}/GATK/intermediary");
   $infoHR->{'analysis_dirs'}{'mosaik-mosaikDS_PE'} = createDirs("$infoHR->{'optHR'}{'outdir'}/mosaik/MosaikDupSnoop_PE");
   $infoHR->{'analysis_dirs'}{'mosaik-mosaikDS_SE'} = createDirs("$infoHR->{'optHR'}{'outdir'}/mosaik/MosaikDupSnoop_SE");
 #print Dumper($infoHR->{'analysis_dirs'});
@@ -141,13 +142,14 @@ sub writeCurrent {
   push(@{$cmdAR}, {'cmd' => qq{echo "$current" > $infoHR->{'optHR'}{'sbatch-cur-file'}}},);
 }
 
+
 sub writeSbatchScripts {
   my $infoHR  = shift;
 
   $infoHR->{'optHR'}{'sbatch-cur-SE'} = "$infoHR->{'analysis_dirs'}{'sbatch-cur'}/$infoHR->{'optHR'}{'prefix'}.SE.running";
   $infoHR->{'optHR'}{'sbatch-cur-PE'} = "$infoHR->{'analysis_dirs'}{'sbatch-cur'}/$infoHR->{'optHR'}{'prefix'}.PE.running";
 
-  { # fastQC x 2, filter and MosaikBuild
+  {
     if ( -f $infoHR->{'optHR'}{'fq1'} and -f $infoHR->{'optHR'}{'fq2'} ) {
       my $ret = `echo "1" > $infoHR->{'optHR'}{'sbatch-cur-SE'}`;
       my $ret = `echo "1" > $infoHR->{'optHR'}{'sbatch-cur-PE'}`;
@@ -160,9 +162,8 @@ sub writeSbatchScripts {
         my $cIdx = 0;
         my $cmdAR = [];
 
-        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "thin", 't' => "50:00:00"});
+        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "thin", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME'}"});
         returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'FastQC', 'Mosaik');
-
 
         push(@{$cmdAR},
 #          {'cmd' => "echo \"running\" > $infoHR->{'optHR'}{'sbatch-cur-prefix'}", 'xn' => 2},
@@ -200,7 +201,7 @@ sub writeSbatchScripts {
         my $cIdx = 1;
         my $cmdAR = [];
 
-        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "50:00:00"});
+        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME_MOSAIK'}"});
         returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'Mosaik');
 
         $cpHR->{'inpPfx'} = "$infoHR->{'analysis_dirs'}{'fastq_filter'}/$infoHR->{'optHR'}{'prefix'}";
@@ -279,7 +280,7 @@ sub writeSbatchScripts {
         my $cIdx = 2;
         my $cmdAR = [];
 
-        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "50:00:00"});
+        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME_MOSAIK'}"});
         returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'Mosaik');
 
         $cpHR->{'inpPfx'} = "$infoHR->{'analysis_dirs'}{'fastq_filter'}/$infoHR->{'optHR'}{'prefix'}";
@@ -358,7 +359,7 @@ sub writeSbatchScripts {
         my $cIdx = 3;
         my $cmdAR = [];
 
-        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "50:00:00"});
+        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME_GATK'}"});
         returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'GATK', 'Samtools');
 
         $cpHR->{'inpPfx'} = "$infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'sample'}";
@@ -417,11 +418,75 @@ sub writeSbatchScripts {
           {'cmd' => "samtools index $cpHR->{'inpPfx'}.merged.recal.realn.reSrt.bam", 'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.merged.samtoolsIndex_3_realn", 'cont' => 0, 'xn' => 2},
         );
 
+        push(@{$cmdAR},
+          {'cmd' => "# Submit next sbatch script(s)"},
+          {'cmd' => "sbatch $infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx + 1]", 'xn' => 2},
+        );
+
         my $sbatchFH = myOpenRW("$infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx]");
         print $sbatchFH returnSbatchScript($infoHR, $paramAR, $cmdAR);
         close($sbatchFH);
 
       }
+
+
+      { # Coverage calculations and variant calling
+        my $cpHR = {};
+        my $cIdx = 4;
+        my $cmdAR = [];
+
+        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME'}"});
+        returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'GATK', 'Samtools'); # Samtools_0_1_12
+
+
+        $cpHR->{'inpFil'} = "$infoHR->{'analysis_dirs'}{'GATK'}/$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt.bam";
+        $cpHR->{'outDir'} = "$infoHR->{'analysis_dirs'}{'coverage'}/";
+        $cpHR->{'outPfx'} = "$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt";
+
+        $cpHR->{'infPfx'} = "$infoHR->{'analysis_dirs'}{'coverage-info'}/$infoHR->{'optHR'}{'sample'}";
+        $cpHR->{'resPfx'} = "$infoHR->{'analysis_dirs'}{'coverage-results'}/$infoHR->{'optHR'}{'sample'}";
+
+        push(@{$cmdAR},
+# ~/script/resequencing_pipeline/calculate_coverage_statistics.pl --ref ~/hg/GRCh37_hg19/GRCh37_hg19_allChr_nl.fa --bed ~/he/Nimblegen_exome/johan_nimblegen_exome_bed/tiled_HG19.bed --bam 12-10F/GATK/12-10F.merged.recal.realn.reSrt.bam --outdir 12-10F/coverage/
+          {'cmd' => "# Coverage calculations"},
+          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'calculate_coverage_statistics'} --ref $infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'} --bed $infoHR->{'optHR'}{'regions'} --bam $cpHR->{'inpFil'} " .
+                    "--outdir $cpHR->{'outDir'} --outPrefix $cpHR->{'outPfx'}",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.coverage", 'cont' => 1, 'xn' => 2},
+        );
+
+
+        $cpHR->{'outDir'} = "$infoHR->{'analysis_dirs'}{'variants'}/";
+        $cpHR->{'outPfx'} = "$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt";
+
+        $cpHR->{'infPfx'} = "$infoHR->{'analysis_dirs'}{'variants-info'}/$infoHR->{'optHR'}{'sample'}";
+        $cpHR->{'resPfx'} = "$infoHR->{'analysis_dirs'}{'variants-results'}/$infoHR->{'optHR'}{'sample'}";
+
+        push(@{$cmdAR},
+#  ~/script/resequencing_pipeline/convert_bam_to_snps_indels.pl --ref ~/hg/GRCh37_hg19/GRCh37_hg19_allChr_nl.fa --bam 12-10F/GATK/12-10F.merged.recal.realn.reSrt.bam --outdir 12-10F/variants/
+          {'cmd' => "# Variant calling MB script"},
+          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'convert_bam_to_snps_indels'} --ref $infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'} --bam $cpHR->{'inpFil'} --outdir $cpHR->{'outDir'} --outPrefix $cpHR->{'outPfx'}",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.MBvariants", 'cont' => 1, 'xn' => 2},
+        );
+
+
+#        $cpHR->{'outPfx'} = "$infoHR->{'analysis_dirs'}{'variants'}/$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt";
+#        push(@{$cmdAR},
+#samtools mpileup -ugf ~/hg/GRCh37_hg19/GRCh37_hg19_allChr_nl.fa 12-10F/GATK/12-10F.merged.recal.realn.reSrt.bam 2> /dev/null|bcftools view -vcg - 2> /dev/null| vcfutils.pl varFilter -D100 |less -S 2> /dev/null
+#          {'cmd' => "# Variant calling mpileup"},
+#          {'cmd' => "module unload $infoHR->{'configHR'}{'MOD'}{'Samtools'}"},
+#          {'cmd' => "module load $infoHR->{'configHR'}{'MOD'}{'Samtools_0_1_12'}"},
+#          {'cmd' => "samtools mpileup -ugf $cpHR->{'inpFil'} | bcftools view -bvcg - > $cpHR->{'outPfx'}.raw.bcf",
+#           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.mpileup_1", 'cont' => 0, 'xn' => 1},
+#          {'cmd' => "bcftools view $cpHR->{'outPfx'}.raw.bcf | vcfutils.pl varFilter -D100 >  $cpHR->{'outPfx'}.flt.vcf",
+#           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.mpileup_1", 'cont' => 0, 'xn' => 2},
+#        );
+
+        my $sbatchFH = myOpenRW("$infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx]");
+        print $sbatchFH returnSbatchScript($infoHR, $paramAR, $cmdAR);
+        close($sbatchFH);
+      }
+
+
 
     } elsif ( -f $infoHR->{'optHR'}{'fqS'} ) {
       die "Error: Single end fastq data processing not implemented yet\n";
@@ -430,7 +495,6 @@ sub writeSbatchScripts {
     }
 
   }
-
 
 }
 
@@ -540,6 +604,7 @@ run_exome_analysis.pl [options]
    --outdir          Output directory [required]
    --sample          Output file prefix [required]
    --run             Output file prefix [required]
+   --regions         Bed file describing the sequence capture regions (or other regions) for coverage benchmarking [required]
    --fq1             PE fastq file, direction 1
    --fq2             PE fastq file, direction 2
    --fqS             SE fastq file (not yet implemented)

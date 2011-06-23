@@ -5,7 +5,7 @@ package mySharedFunctions;
 use strict;
 use warnings;
 no warnings qw(uninitialized);
-#use feature ":5.10";
+use feature ":5.10";
 use FindBin;
 
 use lib $FindBin::Bin;
@@ -19,11 +19,12 @@ BEGIN {
   $VERSION     = 0.01;
   @EXPORT      = qw();
   %EXPORT_TAGS = ( basic => [qw(myOpen myOpenRW fixPath createDirs min max round readConfigFile returnHumanReadableTime)] );
-  @EXPORT_OK   = qw(myOpen myOpenRW fixPath createDirs min max round readConfigFile returnHumanReadableTime
+  @EXPORT_OK   = qw(myOpen myOpenRW fixPath createDirs myBasename
+                    min max round readConfigFile returnHumanReadableTime
                     reverseComplement complement complementA translate IUPAC2baseA returnIUPACcode
                     readFastaIndex returnFaFHandIndex returnSequenceFromFasta
                     read_bed_variant_file readKgXref readKgXrefHR getFileHeader retFileType readGtpInfo readFilterInfo
-                    returnChrSortIndex isCanonicalChr
+                    returnChrSortIndex isCanonicalChr chrTranslate
                     returnGenomeSize returnOverlap returnGCfraction);
 }
 
@@ -61,6 +62,11 @@ sub createDirs {
   return $dir;
 }
 
+sub myBasename {
+  my $fullname = shift;
+  if ( $fullname =~ /\/([^\/]+)$/ ) { return $1; } else { return $fullname; }
+}
+
 # Simple math and stat functions
 
 sub min {
@@ -72,7 +78,7 @@ sub max {
 }
 
 sub round {
-  return sprintf("%0.*f", @_);
+  return sprintf("%0.*f", @_[1,0]);
 }
 
 # Useful stuff
@@ -309,18 +315,18 @@ sub getFileHeader {
 
 sub retFileType {
   my $fn = shift;
-#  given(" " . $fn) {
-#    when ( /[ \/]kgXref\.[^\/]*$/ )         { return "ucsc_kgXref"; }
-#    when ( /[ \/]ensGtp\.[^\/]*$/ )         { return "ucsc_ensGtp"; }
-#    when ( /[ \/]knownToRefSeq\.[^\/]*$/ )  { return "ucsc_knownToRefSeq"; }
-#    when ( /[ \/]knownGene\.[^\/]*$/ )      { return "ucsc_knownGene"; }
-#    when ( /[ \/]knownCanonical\.[^\/]*$/ ) { return "ucsc_knownCanonical"; }
-#    when ( /[ \/]ensGene\.[^\/]*$/ )        { return "ucsc_ensGene"; }
-#    when ( /[ \/]refGene\.[^\/]*$/ )        { return "ucsc_refGene"; }
-#    when ( /[ \/]knownIsoforms\.[^\/]*$/ )  { return "ucsc_knownIsoforms"; }
-#    when ( /[ \/]snp131\.[^\/]*$/ )         { return "ucsc_snp131"; }
-#    default                                 { die "\nCannot determine type for $fn\n\n"; }
-#  }
+  given(" " . $fn) {
+    when ( /[ \/]kgXref\.[^\/]*$/ )         { return "ucsc_kgXref"; }
+    when ( /[ \/]ensGtp\.[^\/]*$/ )         { return "ucsc_ensGtp"; }
+    when ( /[ \/]knownToRefSeq\.[^\/]*$/ )  { return "ucsc_knownToRefSeq"; }
+    when ( /[ \/]knownGene\.[^\/]*$/ )      { return "ucsc_knownGene"; }
+    when ( /[ \/]knownCanonical\.[^\/]*$/ ) { return "ucsc_knownCanonical"; }
+    when ( /[ \/]ensGene\.[^\/]*$/ )        { return "ucsc_ensGene"; }
+    when ( /[ \/]refGene\.[^\/]*$/ )        { return "ucsc_refGene"; }
+    when ( /[ \/]knownIsoforms\.[^\/]*$/ )  { return "ucsc_knownIsoforms"; }
+    when ( /[ \/]snp131\.[^\/]*$/ )         { return "ucsc_snp131"; }
+    default                                 { die "\nCannot determine type for $fn\n\n"; }
+  }
 }
 
 
@@ -381,30 +387,82 @@ sub isCanonicalChr {
   return exists($myChrInformationHR->{'myCanonicalChr'}{$chr}) ? $myChrInformationHR->{'myCanonicalChr'}{$chr} : undef;
 }
 
-
+sub chrTranslate {
+  my $chr = shift;
+  return exists($myChrInformationHR->{'myChrTranslate'}{$chr}) ? $myChrInformationHR->{'myChrTranslate'}{$chr} : undef;
+}
 
 # Sequence analysis
 
-#sub returnGenomeSize {
-#  my $refFN = shift;
-#  my $genomeSizeHR = {};
-#  my $refFH = myOpen($refFN);
-#  my $currentChr = "";
-#  while ( my $line = <$refFH> ) {
-#    chomp($line);
-#    if ( $line =~ /^>(\S+)/ ) {
-#      $currentChr = $1;
-#      $currentChr = $infoHR->{'chrTranslate'}{$currentChr} if defined($infoHR->{'chrTranslate'}{$currentChr});
-#      die "Error: Unrecognized chromosome name: $currentChr\n" unless $currentChr =~ /^chr[1-9XYM][0-9]?$/;
-#    } else {
-#      my $noBases = $line =~ tr/ACGTacgt//;
-#      $genomeSizeHR->{'genome'} += $noBases;
-#      $genomeSizeHR->{'chr'}{$currentChr} += $noBases;
-#    }
-#  }
-#  close($refFH);
-#  return $genomeSizeHR;
-#}
+sub returnGenomeSize {
+  my $refFN = shift;
+  my $genomeSizeHR = {};
+  my $mySizeFileSuffix = "mySizeFile";
+
+  if ( -f "$refFN.$mySizeFileSuffix" ) {
+    $genomeSizeHR = readMySizeFile("$refFN.$mySizeFileSuffix");
+  } else {
+    $genomeSizeHR = calculateGenomeSize($refFN);
+    createFastaSizeFile("$refFN.$mySizeFileSuffix", $genomeSizeHR);
+  }
+  return $genomeSizeHR;
+}
+
+
+sub readMySizeFile {
+  my $sizeFN = shift;
+  my $genomeSizeHR = {};
+  my $sizeFH = myOpen($sizeFN);
+  while ( my $line = <$sizeFH> ) {
+    chomp($line);
+    if ( $line =~ /Total_size\t(\d+)/ ) {
+      $genomeSizeHR->{'genome'} = $1;
+    } else {
+      my @cols = split(/\t/, $line);
+      $genomeSizeHR->{'chr'}{$cols[0]} = $cols[1];
+    }
+  }
+  close($sizeFH);
+  return $genomeSizeHR;
+}
+
+
+sub createFastaSizeFile {
+  my $sizeFN       = shift;
+  my $genomeSizeHR = shift;
+
+  warn "File $sizeFN already exists.\n" and return undef if -f $sizeFN;
+  my $sizeFH = myOpenRW($sizeFN);
+
+  printf $sizeFH ("Total_size\t%d\n", $genomeSizeHR->{'genome'});
+  foreach my $chr ( @{$genomeSizeHR->{'chrSortOrder'}} ) {
+    printf $sizeFH ("%s\t%d\n", $chr, $genomeSizeHR->{'chr'}{$chr});
+  }
+  close($sizeFH);
+}
+
+
+sub calculateGenomeSize {
+  my $refFN = shift;
+  my $refFH = myOpen($refFN);
+  my $genomeSizeHR = {};
+  my $currentChr = "";
+  while ( my $line = <$refFH> ) {
+    chomp($line);
+    if ( $line =~ /^>(\S+)/ ) {
+      $currentChr = $1;
+      push(@{$genomeSizeHR->{'chrSortOrder'}}, $currentChr);
+    } else {
+      my $noBases = $line =~ tr/ACGTacgt//;
+      $genomeSizeHR->{'genome'} += $noBases;
+      $genomeSizeHR->{'chr'}{$currentChr} += $noBases;
+    }
+  }
+  close($refFH);
+  return $genomeSizeHR;
+}
+
+
 
 sub returnOverlap {
   my $coordAR = shift;
