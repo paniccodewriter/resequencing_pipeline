@@ -11,7 +11,7 @@ use Data::Dumper;
 
 # custom module usage
 use lib $FindBin::Bin; #use lib '/home/magnus.bjursell/script/modules';
-use mySharedFunctions qw(:basic myBasename fixPath isCanonicalChr chrTranslate returnGenomeSize);
+use mySharedFunctions qw(:basic :html myBasename fixPath isCanonicalChr chrTranslate returnGenomeSize insertThousandSeparator);
 
 
 my $dataHR = {};
@@ -22,7 +22,7 @@ $infoHR->{'optHR'}    = {};
 
 
 # Read input and setup global variables
-GetOptions ($infoHR->{'optHR'}, 'ref=s', 'bed=s', 'bam=s', 'outdir=s', 'outPrefix=s', 'outCoverage=s', 'minCoverage=s', 'minConcQual=s', 'minMappingQual=s', 'help', 'verbose') or pod2usage(2);
+GetOptions ($infoHR->{'optHR'}, 'ref=s', 'bed=s', 'bam=s', 'outdir=s', 'outPrefix=s', 'outCoverage=s', 'minCoverage=s', 'minConcQual=s', 'minMappingQual=s', 'html', 'help', 'verbose') or pod2usage(2);
 pod2usage(1) if $infoHR->{'optHR'}{'h'} or $infoHR->{'optHR'}{'help'};
 loadDefaults($infoHR);
 
@@ -143,7 +143,16 @@ print "Done\n\n";
       print "Output $file file:\t$name\n";
     }
     print "\n";
+
+# Ugly quick fix, construct names for html and plot files
+    $infoHR->{'outFN'}{'tbl_coverage_histogram_per_bed_and_genome'} = fixPath(($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.coverage_histogram_per_bed_and_genome.txt");
+    $infoHR->{'outFN'}{'img_coverage_histogram_per_genome'}         = fixPath(($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.coverage_histogram_per_genome.png");
+    $infoHR->{'outFN'}{'img_coverage_histogram_per_bed'}            = fixPath(($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.coverage_histogram_per_bed.png");
+
+    $infoHR->{'outFN'}{'tbl_coverage_histogram_per_chromosome'} = fixPath(($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.coverage_histogram_per_chromosome.txt");
+    $infoHR->{'outFN'}{'img_coverage_histogram_per_chromosome'} = fixPath(($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.coverage_histogram_per_chromosome.png");
   }
+
 
   {
 # print summary and EZsummary files
@@ -171,8 +180,8 @@ print "Done\n\n";
     print {$infoHR->{'of'}[$idx]{'fh'}} "\n";
 
     printf {$infoHR->{'of'}[$idx]{'fh'}} ("Total coverage in bed region:\t%d\n", $infoHR->{'total_coverage'}{'bed'});
-    printf {$infoHR->{'of'}[$idx]{'fh'}} ("Ratio coverage in bed region / total coverage:\t%0.4f\n", $infoHR->{'total_coverage'}{'bed'} / $infoHR->{'total_coverage'}{'all'});
-    printf {$infoHR->{'of'}[$idx]{'fh'}} ("Ratio high quality bed positions / total high quality positions:\t%0.4f\n", $infoHR->{'highqual_coverage'}{'bed'} / $infoHR->{'highqual_coverage'}{'all'});
+    printf {$infoHR->{'of'}[$idx]{'fh'}} ("Fraction coverage in bed region / total coverage:\t%0.4f\n", $infoHR->{'total_coverage'}{'bed'} / $infoHR->{'total_coverage'}{'all'});
+    printf {$infoHR->{'of'}[$idx]{'fh'}} ("Fraction high quality bed positions / total high quality positions:\t%0.4f\n", $infoHR->{'highqual_coverage'}{'bed'} / $infoHR->{'highqual_coverage'}{'all'});
 
 
 
@@ -240,12 +249,12 @@ print "Done\n\n";
 # Export coverage histogram per bed, region with any coverage and genome
     my $idx = 1;
     print "Exporting coverage histogram for positions in bed file, positions with coverage and genome to file $infoHR->{'of'}[$idx]{'name'}...\n";
-    print {$infoHR->{'of'}[$idx]{'fh'}} "Coverage\tNo positions (bed)\tFraction of positions (bed)\tNo positions (covr)\tFraction of positions (covr)\tFraction of positions (genome)\n";
-    printf {$infoHR->{'of'}[$idx]{'fh'}} ("%d\t%d\t%0.3f\t%d\t%0.3f\t%0.3f\n", 0, $infoHR->{'no_bed_positions'}, 1, $infoHR->{'no_pileup_positions'}, 1, 1);
+    print {$infoHR->{'of'}[$idx]{'fh'}} "Coverage\tNo positions (bed)\tPercent of positions (bed)\tNo positions (covr)\tPercent of positions (covr)\tPercent of positions (genome)\n";
+    printf {$infoHR->{'of'}[$idx]{'fh'}} ("%d\t%d\t%0.3f\t%d\t%0.3f\t%0.3f\n", 0, $infoHR->{'no_bed_positions'}, 100, $infoHR->{'no_pileup_positions'}, 100, 100);
     for my $x ( 1 .. min(max(keys %{$infoHR->{'coverage'}{'all'}}), 500) ) {
-      printf {$infoHR->{'of'}[$idx]{'fh'}} ("%d\t%d\t%0.3f\t", $x, $infoHR->{'coverage'}{'bed'}{$x}, $infoHR->{'coverage'}{'bed'}{$x} / $infoHR->{'no_bed_positions'});
-      printf {$infoHR->{'of'}[$idx]{'fh'}} ("%d\t%0.3f\t", $infoHR->{'coverage'}{'all'}{$x}, $infoHR->{'coverage'}{'all'}{$x} / $infoHR->{'no_pileup_positions'});
-      printf {$infoHR->{'of'}[$idx]{'fh'}} ("%0.3f\n", $infoHR->{'coverage'}{'all'}{$x} / $infoHR->{'genomeSizeHR'}{'genome'});
+      printf {$infoHR->{'of'}[$idx]{'fh'}} ("%d\t%d\t%0.3f\t", $x, $infoHR->{'coverage'}{'bed'}{$x}, 100 * $infoHR->{'coverage'}{'bed'}{$x} / $infoHR->{'no_bed_positions'});
+      printf {$infoHR->{'of'}[$idx]{'fh'}} ("%d\t%0.3f\t", $infoHR->{'coverage'}{'all'}{$x}, 100 * $infoHR->{'coverage'}{'all'}{$x} / $infoHR->{'no_pileup_positions'});
+      printf {$infoHR->{'of'}[$idx]{'fh'}} ("%0.3f\n", 100 * $infoHR->{'coverage'}{'all'}{$x} / $infoHR->{'genomeSizeHR'}{'genome'});
     }
     print "Done\n\n";
   }
@@ -257,7 +266,7 @@ print "Done\n\n";
     print "Exporting coverage histogram by chromosome to file $infoHR->{'of'}[$idx]{'name'}...\n";
 #    print {$infoHR->{'of'}[$idx]{'fh'}} "Coverage\tFraction of positions\n";
     print {$infoHR->{'of'}[$idx]{'fh'}} "cvr"; foreach my $chr ( sort { $infoHR->{'chrSortOrder'}{$a} <=> $infoHR->{'chrSortOrder'}{$b} } keys %{$infoHR->{'chrSortOrder'}} ) { printf {$infoHR->{'of'}[$idx]{'fh'}} ("\t%s", $chr); } print {$infoHR->{'of'}[$idx]{'fh'}} "\n";
-    print {$infoHR->{'of'}[$idx]{'fh'}} "0"; foreach my $chr ( sort { $infoHR->{'chrSortOrder'}{$a} <=> $infoHR->{'chrSortOrder'}{$b} } keys %{$infoHR->{'chrSortOrder'}} ) { printf {$infoHR->{'of'}[$idx]{'fh'}} ("\t%0.3f", 1); } print {$infoHR->{'of'}[$idx]{'fh'}} "\n";
+    print {$infoHR->{'of'}[$idx]{'fh'}} "0"; foreach my $chr ( sort { $infoHR->{'chrSortOrder'}{$a} <=> $infoHR->{'chrSortOrder'}{$b} } keys %{$infoHR->{'chrSortOrder'}} ) { printf {$infoHR->{'of'}[$idx]{'fh'}} ("\t%0.3f", 100); } print {$infoHR->{'of'}[$idx]{'fh'}} "\n";
 
     for my $x ( 1 .. min(max(keys %{$infoHR->{'coverage'}{'all'}}), 500) ) {
       print {$infoHR->{'of'}[$idx]{'fh'}} "$x";
@@ -270,6 +279,138 @@ print "Done\n\n";
   foreach my $outFileHR ( @{$infoHR->{'of'}} ) { close($outFileHR->{'fh'}); }
 
 }
+
+if ( $infoHR->{'optHR'}{'html'} ) { # Print information to html file
+
+#  my $htmlFH = myOpenRW("$infoHR->{'optHR'}{'outdir_results'}/" . join(".", $infoHR->{'optHR'}{'prefix'}, $infoHR->{'optHR'}{'suffix'}, 'summary', 'html'));
+  my $htmlFH = myOpenRW(fixPath(($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.summary.html"));
+  writeHTMLheader($htmlFH, "Basic sequencing data and filtering information");
+
+  print $htmlFH "    <h2>File information</h2>\n";
+  print $htmlFH <<END;
+    <table border="1">
+      <tr><th>Filetype</th><th>File or dir name</th></tr>
+      <tr><td>Input reference file</td><td>${ \(abs_path($infoHR->{'optHR'}{'ref'})) }</td></tr>
+      <tr><td>Input regions bed file</td><td>${ \(abs_path($infoHR->{'optHR'}{'bed'})) }</td></tr>
+      <tr><td>Input bam file</td><td>${ \(abs_path($infoHR->{'optHR'}{'bam'})) }</td></tr>
+      <tr><td>Output directory</td><td>${ \(abs_path($infoHR->{'optHR'}{'outdir'})) }</td></tr>
+    </table>
+END
+  print $htmlFH "    </br>\n";
+
+  print  $htmlFH  "    <h2>Number of positions in input files</h2>\n";
+  printf $htmlFH ("    <table border=\"1\">\n");
+  printf $htmlFH ("      <tr><td>Number of positions in bed file</td><td align=\"right\">%s</td></tr>\n", insertThousandSeparator($infoHR->{'no_bed_positions'}));
+  printf $htmlFH ("      <tr><td>Number of positions in pileup file</td><td align=\"right\">%s</td></tr>\n", insertThousandSeparator($infoHR->{'no_pileup_positions'}));
+  printf $htmlFH ("    </table>\n");
+  print  $htmlFH  "    </br>\n";
+
+  print  $htmlFH  "    <h2>Coverage across the genome and regions with coverage</h2>\n";
+  printf $htmlFH ("    <table border=\"1\">\n");
+  printf $htmlFH ("      <tr><td>Total coverage</td><td align=\"right\">%s</td></tr>\n", insertThousandSeparator($infoHR->{'total_coverage'}{'all'}));
+  printf $htmlFH ("      <tr><td>Average coverage over genome (genome size: %s)</td><td align=\"right\">%0.3f X</td></tr>\n", insertThousandSeparator($infoHR->{'genomeSizeHR'}{'genome'}), $infoHR->{'total_coverage'}{'all'} / $infoHR->{'genomeSizeHR'}{'genome'});
+  printf $htmlFH ("      <tr><td>Average coverage over regions with coverage</td><td align=\"right\">%0.3f X</td></tr>\n", $infoHR->{'total_coverage'}{'all'} / $infoHR->{'no_pileup_positions'});
+  printf $htmlFH ("    </table>\n");
+  print  $htmlFH  "    </br>\n";
+
+
+  print  $htmlFH  "    <h2>High quality positions</h2>\n";
+  printf $htmlFH ("    <h5>(High quality positions are defined as positions where [ covr >= %d X, >= consensus_Q%d, >= RMS_mapping_Q%d ])</h5>\n", @{$infoHR->{'optHR'}}{'minCoverage', 'minConcQual', 'minMappingQual'});
+  printf $htmlFH ("    <table border=\"1\">\n");
+  printf $htmlFH ("      <tr><td>Total number of high qual positions</td><td align=\"right\">%s</td></tr>\n", insertThousandSeparator($infoHR->{'highqual_coverage'}{'all'}));
+  printf $htmlFH ("      <tr><td>Percent of genome with high qual coverage</td><td align=\"right\">%0.3f</td></tr>\n", 100 * $infoHR->{'highqual_coverage'}{'all'} / $infoHR->{'genomeSizeHR'}{'genome'});
+  printf $htmlFH ("      <tr><td>Percent of positions with >= 1X coverage with high qual coverage</td><td align=\"right\">%0.3f</td></tr>\n", 100 * $infoHR->{'highqual_coverage'}{'all'} / $infoHR->{'no_pileup_positions'});
+  printf $htmlFH ("      <tr><td></td></tr>\n");
+
+  printf $htmlFH ("      <tr><td>Number of high qual positions within bed regions</td><td align=\"right\">%s</td></tr>\n", insertThousandSeparator($infoHR->{'highqual_coverage'}{'bed'}));
+  printf $htmlFH ("      <tr><td>Percent of bed region with high qual coverage</td><td align=\"right\">%0.3f</td></tr>\n", 100 * $infoHR->{'highqual_coverage'}{'bed'} / $infoHR->{'no_bed_positions'});
+  printf $htmlFH ("    </table>\n");
+  print  $htmlFH  "    </br>\n";
+
+  print  $htmlFH  "    <h2>Statistics on coverage in bed regions</h2>\n";
+  printf $htmlFH ("    <h5>(High quality positions are defined as positions where [ covr >= %d X, >= consensus_Q%d, >= RMS_mapping_Q%d ])</h5>\n", @{$infoHR->{'optHR'}}{'minCoverage', 'minConcQual', 'minMappingQual'});
+  printf $htmlFH ("    <table border=\"1\">\n");
+  printf $htmlFH ("      <tr><td>Total coverage in bed region</td><td align=\"right\">%s</td></tr>\n", insertThousandSeparator($infoHR->{'total_coverage'}{'bed'}));
+  if ( $infoHR->{'total_coverage'}{'bed'} ) {
+    printf $htmlFH ("      <tr><td>Average coverage in bed regions</td><td align=\"right\">%0.3f</td></tr>\n", $infoHR->{'total_coverage'}{'bed'} / $infoHR->{'no_bed_positions'});
+    printf $htmlFH ("      <tr><td>Base 80 coverage</td><td align=\"right\">%0.3f</td></tr>\n", $infoHR->{'base80_coverage'});
+    printf $htmlFH ("      <tr><td>Base 80 penalty</td><td align=\"right\">%0.3f</td></tr>\n", ( $infoHR->{'total_coverage'}{'bed'} / $infoHR->{'no_bed_positions'} ) / $infoHR->{'base80_coverage'});
+  } else {
+    printf $htmlFH ("      <tr style=\"color: red;\"><td>No coverage in bed regions</td><td align=\"right\">%0.3f</td></tr>\n", 0);
+    printf $htmlFH ("      <tr><td>Base 80 coverage</td><td align=\"right\">%0.3f</td></tr>\n", 0);
+    printf $htmlFH ("      <tr><td>Base 80 penalty</td><td align=\"right\">%s</td></tr>\n", "n/a");
+  }
+  printf $htmlFH ("      <tr><td></td></tr>\n");
+
+  printf $htmlFH ("      <tr><td>Percent coverage in bed region / total coverage</td><td align=\"right\">%0.3f</td></tr>\n", 100 * $infoHR->{'total_coverage'}{'bed'} / $infoHR->{'total_coverage'}{'all'});
+  printf $htmlFH ("      <tr><td>Percent high quality bed positions / total high quality positions</td><td align=\"right\">%0.3f</td></tr>\n", 100 * $infoHR->{'highqual_coverage'}{'bed'} / $infoHR->{'highqual_coverage'}{'all'});
+  printf $htmlFH ("    </table>\n");
+  print  $htmlFH  "    </br>\n";
+
+  print  $htmlFH  "    <h2>Coverage per chromosome</h2>\n";
+  printf $htmlFH ("  <table border=\"1\">\n");
+  printf $htmlFH ("    <tr><th>Chromosome</th><th>Size</th><th>High qual pos</th><th>Total coverage</th><th>Avg coverage</th></tr>\n");
+  foreach my $chr ( sort { $infoHR->{'chrSortOrder'}{$a} <=> $infoHR->{'chrSortOrder'}{$b} } keys %{$infoHR->{'chrSortOrder'}} ) {
+
+    printf $htmlFH ("      <tr><td>%s</td><td align=\"right\">%s</td><td align=\"right\">%s</td><td align=\"right\">%s</td><td align=\"right\">%0.2f X</td></tr>\n",
+                   $chr, insertThousandSeparator($infoHR->{'genomeSizeHR'}{'chr'}{$chr}), insertThousandSeparator($infoHR->{'highqual_coverage'}{'chr'}{$chr}),
+                   insertThousandSeparator($infoHR->{'total_coverage'}{'chr'}{$chr}), $infoHR->{'total_coverage'}{'chr'}{$chr} / $infoHR->{'genomeSizeHR'}{'chr'}{$chr});
+  }
+  print $htmlFH "    </table>\n";
+  print $htmlFH "    </br>\n";
+
+  {
+    print $htmlFH "    <h2>Coverage statistics for the genome and positions with any coverage</h2>\n";
+#    print $htmlFH "    </br>\n";
+    my $FNonly = writeCovrHistoPerGenomePlot($infoHR, 500);
+    print $htmlFH "    <img src=\"$FNonly\" alt=\"Genome coverage\" />\n";
+    print $htmlFH "    </br>\n";
+  }
+
+  {
+    print $htmlFH "    <h2>Coverage statistics for the genome and positions with any coverage (zoomed X axes)</h2>\n";
+#    print $htmlFH "    </br>\n";
+    my $FNonly = writeCovrHistoPerGenomePlot($infoHR, 100);
+    print $htmlFH "    <img src=\"$FNonly\" alt=\"Genome coverage\" />\n";
+    print $htmlFH "    </br>\n";
+  }
+
+
+  {
+    print $htmlFH "    <h2>Coverage statistics for the bed regions</h2>\n";
+#    print $htmlFH "    </br>\n";
+    my $FNonly = writeCovrHistoPerBedPlot($infoHR, 500);
+    print $htmlFH "    <img src=\"$FNonly\" alt=\"Bed region coverage\" />\n";
+    print $htmlFH "    </br>\n";
+  }
+
+  {
+    print $htmlFH "    <h2>Coverage statistics for the bed regions (zoomed X axes)</h2>\n";
+#    print $htmlFH "    </br>\n";
+    my $FNonly = writeCovrHistoPerBedPlot($infoHR, 100);
+    print $htmlFH "    <img src=\"$FNonly\" alt=\"Bed region coverage\" />\n";
+    print $htmlFH "    </br>\n";
+  }
+
+
+  {
+    print $htmlFH "    <h2>Coverage statistics for chromosomes</h2>\n";
+#    print $htmlFH "    </br>\n";
+    my $FNonly = writeCovrHistoPerChrPlot($infoHR, 500);
+    print $htmlFH "    <img src=\"$FNonly\" alt=\"Chromosome coverage\" />\n";
+    print $htmlFH "    </br>\n";
+  }
+
+  {
+    print $htmlFH "    <h2>Coverage statistics for chromosomes (zoomed X axes)</h2>\n";
+#    print $htmlFH "    </br>\n";
+    my $FNonly = writeCovrHistoPerChrPlot($infoHR, 100);
+    print $htmlFH "    <img src=\"$FNonly\" alt=\"Chromosome coverage\" />\n";
+    print $htmlFH "    </br>\n";
+  }
+
+}
+
 
 exit;
 
@@ -306,6 +447,146 @@ sub checkSamTools {
 }
 
 
+sub writeCovrHistoPerGenomePlot {
+  my $infoHR = shift;
+  my $maxX   = shift; $maxX = "*" unless $maxX;
+  my $gnuPlotPipe = myOpen("| gnuplot");
+  print $gnuPlotPipe <<END;
+    set size 1, 1
+    set term png size 800, 600
+    set output "$infoHR->{'outFN'}{'img_coverage_histogram_per_genome'}"
+
+    set title "Genome-based coverage statistics"
+    set boxwidth 0.9 relative
+    set style fill solid 1.0 border -1
+    set style line 1 lt 2 lc rgb "blue" lw 2 pt 2 ps 0.5
+    set style line 2 lt 2 lc rgb "green" lw 2 pt 3 ps 0.5
+
+    set key outside below
+    set key box lw 1 lc rgb "black"
+    set key spacing 1.5
+
+    set xtics nomirror 
+    set xlabel "Coverage"
+    set xrange [0:$maxX]
+
+    set ytics nomirror 
+    set y2tics nomirror 
+
+    set yrange [0:*]
+    set ytics border
+    set mytics
+    set ylabel "Number of positions"
+
+    set y2range [0:*]
+    set y2tics border
+    set y2tics
+    set my2tics
+    set y2label "Percent"
+
+    plot "$infoHR->{'outFN'}{'tbl_coverage_histogram_per_bed_and_genome'}" using 1:4 every ::2 title "Number of positions" with boxes, \\
+         "$infoHR->{'outFN'}{'tbl_coverage_histogram_per_bed_and_genome'}" using 1:5 every ::2 axes x1y2 title "Percent of positions with coverage" with linespoints ls 1, \\
+         "$infoHR->{'outFN'}{'tbl_coverage_histogram_per_bed_and_genome'}" using 1:6 every ::2 axes x1y2 title "Percent of genome" with linespoints ls 2
+
+END
+  close($gnuPlotPipe);
+  return myBasename($infoHR->{'outFN'}{'img_coverage_histogram_per_genome'});
+}
+
+sub writeCovrHistoPerBedPlot {
+  my $infoHR = shift;
+  my $maxX   = shift; $maxX = "*" unless $maxX;
+  my $gnuPlotPipe = myOpen("| gnuplot");
+  print $gnuPlotPipe <<END;
+    set size 1, 1
+    set term png size 800, 600
+    set output "$infoHR->{'outFN'}{'img_coverage_histogram_per_bed'}"
+
+    set title "Bed region-based coverage statistics"
+    set boxwidth 0.9 relative
+    set style fill solid 1.0 border -1
+    set style line 1 lt 2 lc rgb "blue" lw 2 pt 2 ps 0.5
+
+    set key outside below
+    set key box lw 1 lc rgb "black"
+    set key spacing 1.5
+
+    set xtics nomirror 
+    set xlabel "Coverage"
+    set xrange [0:$maxX]
+
+    set ytics nomirror 
+    set y2tics nomirror 
+
+    set yrange [0:*]
+    set ytics border
+    set mytics
+    set ylabel "Number of positions"
+
+    set y2range [0:*]
+    set y2tics border
+    set y2tics
+    set my2tics
+    set y2label "Percent"
+
+    plot "$infoHR->{'outFN'}{'tbl_coverage_histogram_per_bed_and_genome'}" using 1:2 every ::2 title "Number of positions" with boxes, \\
+         "$infoHR->{'outFN'}{'tbl_coverage_histogram_per_bed_and_genome'}" using 1:3 every ::2 axes x1y2 title "Percent of bed region positions" with linespoints ls 1
+
+END
+  close($gnuPlotPipe);
+  return myBasename($infoHR->{'outFN'}{'img_coverage_histogram_per_bed'});
+}
+
+sub writeCovrHistoPerChrPlot {
+  my $infoHR = shift;
+  my $maxX   = shift; $maxX = "*" unless $maxX;
+  my $gnuPlotPipe = myOpen("| gnuplot");
+
+  my $plotStr = ""; my $col = 2;
+  foreach my $chr ( sort { $infoHR->{'chrSortOrder'}{$a} <=> $infoHR->{'chrSortOrder'}{$b} } keys %{$infoHR->{'chrSortOrder'}} ) {
+    $plotStr .= "\"$infoHR->{'outFN'}{'tbl_coverage_histogram_per_chromosome'}\" using 1:" . $col++ . " every ::2 title \"$chr\" with lines lw 2, ";
+  }
+  $plotStr =~ s/\,\s+$//;
+
+  print $gnuPlotPipe <<END;
+    set size 1, 1
+    set term png size 800, 600
+    set output "$infoHR->{'outFN'}{'img_coverage_histogram_per_chromosome'}"
+
+    set title "Bed region-based coverage statistics"
+    set boxwidth 0.9 relative
+    set style fill solid 1.0 border -1
+    set style line 1 lt 2 lw 2 pt 2 ps 0.5
+
+    set key outside below
+    set key box lw 1 lc rgb "black"
+    set key spacing 1.5
+
+    set xtics nomirror 
+    set xlabel "Coverage"
+    set xrange [0:$maxX]
+
+    set ytics nomirror 
+    set y2tics nomirror 
+
+    set yrange [0:*]
+    set ytics border
+    set mytics
+    set ylabel "Number of positions"
+
+    set y2range [0:*]
+    set y2tics border
+    set y2tics
+    set my2tics
+    set y2label "Percent"
+
+    plot $plotStr
+
+END
+  close($gnuPlotPipe);
+  return myBasename($infoHR->{'outFN'}{'img_coverage_histogram_per_chromosome'});
+}
+
 
 #__END__
 
@@ -325,10 +606,10 @@ calculate_coverage_statistics.pl [options]
    --outPrefix       Output file prefix, bam file name will be used if not supplied
    --outCoverage     Output bed file for coverage (will be large; contains
                      coverage information for each position with coverage [optional]
+   --html            Generate html output file
    --ref             Reference sequence fasta file [required]
    --bed             Bed file describing the regions [required]
    --bam             Bam file containing the alignments [required]
-   --shm             Use shared memory (/dev/shm)
    --minCoverage     Minimum coverage (default: 8)
    --minConcQual     Minimum concensus quality (default: 30)
    --minMappingQual  Minimum RMS mapping quality (default: 30)

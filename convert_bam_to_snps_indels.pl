@@ -1,9 +1,5 @@
 #!/usr/bin/perl
-#/sw/comp/perl/5.12.3_kalkyl/bin/perl
 # (c) 2011 Magnus Bjursell
-
-#BEGIN { push @INC,"/sw/comp/perl/5.12.3_kalkyl/lib/"; }
-
 
 # standard module usage
 use strict;
@@ -12,10 +8,11 @@ use Pod::Usage;
 use Cwd 'abs_path';
 use FindBin;
 use Data::Dumper;
+use feature ":5.10";
 
 # custom module usage
 use lib $FindBin::Bin; #use lib '/home/magnus.bjursell/script/modules';
-use mySharedFunctions qw(:basic returnFaFHandIndex returnSequenceFromFasta myBasename);
+use mySharedFunctions qw(:basic returnFaFHandIndex returnSequenceFromFasta myBasename IUPAC2baseA);
 
 my $dataHR = {};
 my $infoHR = {};
@@ -41,10 +38,10 @@ $infoHR->{'optHR'}{'outdir_results'} = fixPath($infoHR->{'optHR'}{'outdir'} . "/
 my $ret = `mkdir -p $infoHR->{'optHR'}{'outdir_results'}` unless -d $infoHR->{'optHR'}{'outdir_results'};
 
 {
-  my $bedFH = myOpenRW(fixPath(($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.variants.vbed"));
-#  my $annovarFH = myOpen(fixPath($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "" . "$infoHR->{'optHR'}{'outPrefix'}.variants.annovar"));
-  my $sumFH = myOpenRW(fixPath(($infoHR->{'optHR'}{'outdir_results'} ? "$infoHR->{'optHR'}{'outdir_results'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.summary.txt"));
-  my $aFqFH = myOpenRW(fixPath(($infoHR->{'optHR'}{'outdir_results'} ? "$infoHR->{'optHR'}{'outdir_results'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.alleleReadFrequecies.txt"));
+  my $bedFH     = myOpenRW(fixPath("$infoHR->{'optHR'}{'outdir'}/$infoHR->{'optHR'}{'outPrefix'}.variants.vbed"));
+  my $annovarFH = myOpenRW(fixPath("$infoHR->{'optHR'}{'outdir'}/$infoHR->{'optHR'}{'outPrefix'}.variants.annovar"));
+  my $sumFH     = myOpenRW(fixPath("$infoHR->{'optHR'}{'outdir_results'}/$infoHR->{'optHR'}{'outPrefix'}.summary.txt"));
+  my $aFqFH     = myOpenRW(fixPath("$infoHR->{'optHR'}{'outdir_results'}/$infoHR->{'optHR'}{'outPrefix'}.alleleReadFrequecies.txt"));
 
   print_parameters($sumFH);
   local $| = 1;
@@ -53,11 +50,16 @@ my $ret = `mkdir -p $infoHR->{'optHR'}{'outdir_results'}` unless -d $infoHR->{'o
   my $pipe = myOpen("$fullCmdLine |");
   while ( my $singleEntry = <$pipe> ) {
     my @cols = split(/\t/, $singleEntry);
-    print $bedFH parse_pileup_line(\@cols, $infoHR);
+    my $varHR = parse_pileup_line(\@cols, $infoHR);
+    print $bedFH $varHR->{'bedFormat'};
+    print $annovarFH $varHR->{'annovarFormat'};
+#    print $bedFH parse_pileup_line(\@cols, $infoHR);
     print "Processing $cols[0]...\n" unless exists($dataHR->{$cols[0]});
     $dataHR->{$cols[0]} = 1;
   }
   close($pipe);
+
+
   print "Done.\n\n";
   print $sumFH "Number of SNVs:\t$infoHR->{'stats'}{'noSNVs'}\n";
   print $sumFH "Number of homozygous SNVs:\t$infoHR->{'stats'}{'noHomSNVs'}\n";
@@ -66,6 +68,18 @@ my $ret = `mkdir -p $infoHR->{'optHR'}{'outdir_results'}` unless -d $infoHR->{'o
   print $sumFH "Number of transversions:\t$infoHR->{'stats'}{'noTsTv'}{'transversion'}\n";
   print $sumFH "\n";
 
+  print $sumFH "Base conversions (acutal bases)\n";
+  foreach my $toBase ( sort keys %{$infoHR->{'stats'}{'toBaseCount_b'}} ) { print $sumFH "\t$toBase"; } print $sumFH "\n";
+  foreach my $fromBase ( sort keys %{$infoHR->{'stats'}{'fromBaseCount'}} ) {
+    print $sumFH "$fromBase";
+    foreach my $toBase ( sort keys %{$infoHR->{'stats'}{'toBaseCount_b'}} ) {
+      print $sumFH "\t$infoHR->{'stats'}{'noSpecChngs_b'}{$fromBase}{$toBase}";
+    }
+    print $sumFH "\n";
+  }
+  print $sumFH "\n\n";
+
+  print $sumFH "Base conversions (including heterozygous / homozygous IUPAC bases)\n";
   foreach my $toBase ( sort keys %{$infoHR->{'stats'}{'toBaseCount'}} ) { print $sumFH "\t$toBase"; } print $sumFH "\n";
   foreach my $fromBase ( sort keys %{$infoHR->{'stats'}{'fromBaseCount'}} ) {
     print $sumFH "$fromBase";
@@ -133,6 +147,7 @@ sub parse_pileup_SNP_line {
   my $infoHR = shift;
   die "\nIncorrect pileup variant format, expected 10 columns, got this:\n" . join("\t", @{$colsAR}) . "\n\n" unless scalar(@{$colsAR}) == 10;
 
+  return {'bedFormat' => "", 'annovarFormat' => "",} if $colsAR->[2] eq $colsAR->[3];
   my $noSeqs   = 0;
   my $noDels   = 0;
   my $noIndels = 0;
@@ -141,17 +156,10 @@ sub parse_pileup_SNP_line {
     my $matchAR = [$1, $2, $3, $4, $5, $6, $7, $8, $9];
     $noIndels++, next if $matchAR->[2];
     my $base = "";
-#    given($matchAR->[7]) {
-#      when (/[\,\.]/) {$base = uc($colsAR->[2]);}
-#      when (/\*/) {$base = "D";}
-#      when (/[ACGTNacgtn]/) {$base = uc($_);}
-#    }
-    if ( $matchAR->[7] =~ /[\,\.]/ ) {
-      $base = uc($colsAR->[2]);
-    } elsif ( $matchAR->[7] =~ /\*/ ) {
-      $base = "D";
-    } elsif ( $matchAR->[7] =~ /[ACGTNacgtn]/ ) {
-      $base = uc($matchAR->[7]);
+    given($matchAR->[7]) {
+      when (/[\,\.]/) {$base = uc($colsAR->[2]);}
+      when (/\*/) {$base = "D";}
+      when (/[ACGTNacgtn]/) {$base = uc($_);}
     }
     $cntHR->{$base}++;
     $noSeqs++;
@@ -173,26 +181,40 @@ sub parse_pileup_SNP_line {
     }
   }
 
-#print "No alleles: " . scalar(keys %{$cntHR}) . "; cntStr: $cntStr; " . join(":", keys %{$cntHR}) . "; AlStr: $colsAR->[8];\n" if scalar(keys %{$cntHR}) >= 4;
-#print "No same as ref (" . uc($colsAR->[2]) . "): " . $cntHR->{uc($colsAR->[2])} . "; Total covr: $colsAR->[7]; No alt alleles: " . int( 100 * ( ($colsAR->[7] - $cntHR->{uc($colsAR->[2])}) / ($colsAR->[7] + 0.000000001) ) ) . "\n\n" if uc($colsAR->[3]) !~ /^[ACGT]$/;
-
-#  warn "Reference bases differ between input ref and bam file for " . join("\t", @{$colsAR}) . "...\n" unless uc(returnSequenceFromFasta($faiHR, $colsAR->[0], ($colsAR->[1] - 1), 1)) eq uc($colsAR->[2]);
-
+  my $annovarString = "";
   if ( $noDels / $noSeqs > $infoHR->{'optHR'}{'maxDelFrc'} ) {
-    return "";
+    return {};
+#    return {'bedFormat' => "", 'annovarFormat' => "",};
+
   } else {
     my $fNt = uc($colsAR->[2]);
     my $tNt = uc($colsAR->[3]);
-    
+
     $infoHR->{'stats'}{'noSNVs'}++;
     if ( $tNt =~ /^[ACGT]$/ ) { $infoHR->{'stats'}{'noHomSNVs'}++; } else { $infoHR->{'stats'}{'noHetSNVs'}++; }
     $infoHR->{'stats'}{'noSpecChngs'}{$fNt}{$tNt}++;
-    $infoHR->{'stats'}{'noTsTv'}{'transition'}++   if ($fNt eq "A" and $tNt eq "G") or ($fNt eq "G" and $tNt eq "A") or ($fNt eq "C" and $tNt eq "T") or ($fNt eq "T" and $tNt eq "C");
-    $infoHR->{'stats'}{'noTsTv'}{'transversion'}++ if ($fNt eq "A" and $tNt eq "C") or ($fNt eq "C" and $tNt eq "A") or ($fNt eq "G" and $tNt eq "T") or ($fNt eq "T" and $tNt eq "G") or
-                                                      ($fNt eq "A" and $tNt eq "T") or ($fNt eq "T" and $tNt eq "A") or ($fNt eq "C" and $tNt eq "G") or ($fNt eq "G" and $tNt eq "C");
     $infoHR->{'stats'}{'fromBaseCount'}{$fNt}++; 
     $infoHR->{'stats'}{'toBaseCount'}{$tNt}++;
-    return sprintf ("%s\t%d\t%d\t%s=>%s(%d;%s)\t%d\t+\n", $colsAR->[0], ($colsAR->[1] - 1), $colsAR->[1], $fNt, $tNt, $colsAR->[7], $cntStr, $colsAR->[5] );
+
+    foreach my $altBase ( sort {$a cmp $b} IUPAC2baseA($tNt) ) {
+      my $tNtb = uc($altBase);
+      next if $altBase eq $fNt;
+
+      $infoHR->{'stats'}{'noSNVs_b'}++;
+      $infoHR->{'stats'}{'noSpecChngs_b'}{$fNt}{$tNtb}++;
+      $infoHR->{'stats'}{'toBaseCount_b'}{$tNtb}++;
+
+      $infoHR->{'stats'}{'noTsTv'}{'transition'}++   if ($fNt eq "A" and $tNtb eq "G") or ($fNt eq "G" and $tNtb eq "A") or ($fNt eq "C" and $tNtb eq "T") or ($fNt eq "T" and $tNtb eq "C");
+      $infoHR->{'stats'}{'noTsTv'}{'transversion'}++ if ($fNt eq "A" and $tNtb eq "C") or ($fNt eq "C" and $tNtb eq "A") or ($fNt eq "G" and $tNtb eq "T") or ($fNt eq "T" and $tNtb eq "G") or
+
+      $annovarString .= sprintf ("%s\t%d\t%d\t%s\t%s\tid:%s;type:%s;covr:%d;cnts:(%s);snpQ:%d;conQ:%d;mapQ:%d;%s\n", $colsAR->[0], $colsAR->[1], $colsAR->[1], $fNt, $tNtb,
+                                ("$colsAR->[0]:$colsAR->[1]-$colsAR->[1]" . "_$tNtb"), "snv", $colsAR->[7], $cntStr, $colsAR->[4], $colsAR->[5], $colsAR->[6], $tNt =~ /[ACGT]/ ? "hom" : "het");
+    }
+
+    return {'bedFormat'     => sprintf ("%s\t%d\t%d\t%s=>%s(%d;%s)\t%d\t+\n", $colsAR->[0], ($colsAR->[1] - 1), $colsAR->[1], $fNt, $tNt, $colsAR->[7], $cntStr, $colsAR->[5]),
+            'annovarFormat' => $annovarString,};
+
+#    return sprintf ("%s\t%d\t%d\t%s=>%s(%d;%s)\t%d\t+\n", $colsAR->[0], ($colsAR->[1] - 1), $colsAR->[1], $fNt, $tNt, $colsAR->[7], $cntStr, $colsAR->[5]);
   }
 }
 
@@ -202,8 +224,8 @@ sub parse_pileup_indel_line {
   my $infoHR = shift;
   die "\nIncorrect pileup indel format, expected 15 columns, got this:\n" . join("\t", @{$colsAR}) . "\n\n" unless scalar(@{$colsAR}) == 15;
 
-  return "" if $colsAR->[12] / $colsAR->[7] > $infoHR->{'optHR'}{'maxOtherFrac'};
-  return "" if $colsAR->[7] < $infoHR->{'optHR'}{'minIndelNoRds'};
+  return {} if $colsAR->[12] / $colsAR->[7] > $infoHR->{'optHR'}{'maxOtherFrac'};
+  return {} if $colsAR->[7] < $infoHR->{'optHR'}{'minIndelNoRds'};
 
   my $alleleHR = {$colsAR->[8] => $colsAR->[10], $colsAR->[9] => $colsAR->[11], 'O' => $colsAR->[12], };
   delete($alleleHR->{'O'}) unless $alleleHR->{'O'} > 0;
@@ -220,8 +242,9 @@ sub parse_pileup_indel_line {
   $cntStr =~ s/,$//;
 
   if ( $pass ) {
-    my $start = $length == 0 ? $colsAR->[1] - 1 : $colsAR->[1];
-    my $end   = $length == 0 ? $colsAR->[1] - 1 : $colsAR->[1] + $length;
+    my $start  = $length == 0 ? $colsAR->[1] - 1 : $colsAR->[1];
+    my $end    = $length == 0 ? $colsAR->[1] - 1 : $colsAR->[1] + $length;
+    my $end_av = $length == 0 ? $colsAR->[1] : $colsAR->[1] + $length - 1;
     $infoHR->{'stats'}{'noIndels'}++;
     if ( $colsAR->[3] =~ /\+(\w+)/ ) {
       $infoHR->{'stats'}{'noIndelType'}{'insertionHisto'}{length($1)}++;
@@ -230,9 +253,27 @@ sub parse_pileup_indel_line {
       $infoHR->{'stats'}{'noIndelType'}{'deletionHisto'}{length($1)}++;
       $infoHR->{'stats'}{'noIndelType'}{'deletion'}++;
     }
-    return sprintf ("%s\t%d\t%d\t%s=>%s(%d;%s)\t%d\t+\n", $colsAR->[0], $start, $end, uc(returnSequenceFromFasta($faiHR, $colsAR->[0], $start, 1)), uc($colsAR->[3]), $colsAR->[7], $cntStr, $colsAR->[5] );
+
+    my $annovarString = "";
+    my $splitAlleleHR = { map { $_ => 1 } split(/\//, $colsAR->[3]) };
+    foreach my $allele ( keys %{$splitAlleleHR} ) { #split(/\//, $colsAR->[3]) ) {
+      next if $allele eq "*";
+
+      my $fNt = $allele =~ /^\+(\w+)/ ? "-" : $1; #uc(returnSequenceFromFasta($faiHR, $colsAR->[0], $start, 1));
+      my $tNt = $allele =~ /^\+(\w+)/ ? $1 : "-"; #my $tNt = $colsAR->[3] =~ /([^\/])\/\1/ ? uc($1) : uc($colsAR->[3]);
+
+      $annovarString .= sprintf ("%s\t%d\t%d\t%s\t%s\tid:%s;type:%s;covr:%d;cnts:(%s);snpQ:%d;conQ:%d;mapQ:%d;%s\n", $colsAR->[0], $colsAR->[1], $end_av, $fNt, $tNt,
+                                ("$colsAR->[0]:$colsAR->[1]-$end_av" . "_$allele"), ($length == 0 ? "ins" : "del"), $colsAR->[7], $cntStr, $colsAR->[4], $colsAR->[5], $colsAR->[6], scalar(keys %{$splitAlleleHR}) == 1 ? "hom" : "het");
+
+    }
+
+    return {'bedFormat'     => sprintf ("%s\t%d\t%d\t%s=>%s(%d;%s)\t%d\t+\n", $colsAR->[0], $start, $end, uc(returnSequenceFromFasta($faiHR, $colsAR->[0], $start, 1)), uc($colsAR->[3]), $colsAR->[7], $cntStr, $colsAR->[5]),
+            'annovarFormat' => $annovarString,};
+
+#    return sprintf ("%s\t%d\t%d\t%s=>%s(%d;%s)\t%d\t+\n", $colsAR->[0], $start, $end, uc(returnSequenceFromFasta($faiHR, $colsAR->[0], $start, 1)), uc($colsAR->[3]), $colsAR->[7], $cntStr, $colsAR->[5] );
   } else {
-    return "";
+    return {};
+#    return {'bedFormat' => "", 'annovarFormat' => "",};
   }
 }
 

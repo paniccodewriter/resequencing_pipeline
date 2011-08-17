@@ -172,7 +172,7 @@ sub writeSbatchScripts {
           {'cmd' => "fastqc -o $infoHR->{'analysis_dirs'}{'fastq-results'}/ $infoHR->{'optHR'}{'fq2'}", 'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'fastq-info'}/$infoHR->{'optHR'}{'fq2b'}.fastQC", 'cont' => 1, 'xn' => 2},
 
           {'cmd' => "# Filter reads"},
-          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'filter_fastq'} --outdir $infoHR->{'analysis_dirs'}{'fastq_filter'}/ --prefix $infoHR->{'optHR'}{'prefix'} --suffix filter --fq1 $infoHR->{'optHR'}{'fq1'} --fq2 $infoHR->{'optHR'}{'fq2'}",
+          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'filter_fastq'} --outdir $infoHR->{'analysis_dirs'}{'fastq_filter'}/ --prefix $infoHR->{'optHR'}{'prefix'} --suffix filter --fq1 $infoHR->{'optHR'}{'fq1'} --fq2 $infoHR->{'optHR'}{'fq2'} -html",
            'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'fastq_filter-info'}/$infoHR->{'optHR'}{'prefix'}.filter_fastq", 'cont' => 0, 'xn' => 2},
 
           {'cmd' => "# Submit next sbatch script(s)"},
@@ -440,7 +440,7 @@ sub writeSbatchScripts {
 
 
         $cpHR->{'inpFil'} = "$infoHR->{'analysis_dirs'}{'GATK'}/$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt.bam";
-        $cpHR->{'outDir'} = "$infoHR->{'analysis_dirs'}{'coverage'}/";
+        $cpHR->{'outDir'} = "$infoHR->{'analysis_dirs'}{'coverage-results'}/";
         $cpHR->{'outPfx'} = "$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt";
 
         $cpHR->{'infPfx'} = "$infoHR->{'analysis_dirs'}{'coverage-info'}/$infoHR->{'optHR'}{'sample'}";

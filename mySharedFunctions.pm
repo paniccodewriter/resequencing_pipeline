@@ -18,14 +18,15 @@ BEGIN {
   @ISA = qw(Exporter);
   $VERSION     = 0.01;
   @EXPORT      = qw();
-  %EXPORT_TAGS = ( basic => [qw(myOpen myOpenRW fixPath createDirs min max round readConfigFile returnHumanReadableTime)] );
+  %EXPORT_TAGS = ( basic => [qw(myOpen myOpenRW fixPath createDirs myBasename min max round readConfigFile returnHumanReadableTime)], html => [qw(writeHTMLheader writeHTMLend)] );
   @EXPORT_OK   = qw(myOpen myOpenRW fixPath createDirs myBasename
-                    min max round readConfigFile returnHumanReadableTime
+                    min max round insertThousandSeparator readConfigFile returnHumanReadableTime
                     reverseComplement complement complementA translate IUPAC2baseA returnIUPACcode
                     readFastaIndex returnFaFHandIndex returnSequenceFromFasta
                     read_bed_variant_file readKgXref readKgXrefHR getFileHeader retFileType readGtpInfo readFilterInfo
                     returnChrSortIndex isCanonicalChr chrTranslate
-                    returnGenomeSize returnOverlap returnGCfraction);
+                    returnGenomeSize returnOverlap returnGCfraction
+                    writeHTMLheader writeHTMLend);
 }
 
 #our @EXPORT_OK;
@@ -81,6 +82,13 @@ sub round {
   return sprintf("%0.*f", @_[1,0]);
 }
 
+sub insertThousandSeparator {
+  my $number = shift;
+  $number = round($number, $_[0]) if $_[0];
+  $number =~ s/\d{1,3}(?=(\d{3})+(?!\d))/$&,/g;
+  return $number;
+}
+
 # Useful stuff
 
 sub returnHumanReadableTime {
@@ -101,7 +109,7 @@ sub readConfigFile {
     if ( $line =~ /(\w+)\\([\w\-]+)\s*=\s*\"([^\"]*)\"/ ) {
       my ($type, $key, $value) = (uc($1), $2, $3);
       while ( $value =~ /\[([^\]]+)\]/g ) { $value =~ s/\[([^\]]+)\]/$configHR->{$type}{$1}\// if defined($configHR->{$type}{$1}) };
-      $value = fixPath($value) if $type eq "PATH";
+      $value = fixPath($value) if $type =~ /^PATH/;
       $configHR->{$type}{$key} = $value;
     }
   }
@@ -167,7 +175,7 @@ sub translate {
 
 sub IUPAC2baseA {
   my $base = substr(shift, 0, 1);
-  return @{$myBioDataHR->{'myNucleotideCodesHR'}{uc($base)}};
+  return @{$myBioDataHR->{'IUPAC2NucleotideAR_HR'}{uc($base)}};
 }
 
 sub returnIUPACcode {
@@ -496,6 +504,37 @@ sub returnGCfraction {
     return ($noGC / length($seqIn) );
   }
 }
+
+
+# html related funtions
+
+
+sub writeHTMLheader {
+  my $fh    = shift;
+  my $title = shift;
+
+#print $fh "Content-type:text/html\r\n\r\n";
+print $fh <<END;
+
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+    <title>$title</title>
+  </head>
+  <body>
+END
+}
+
+sub writeHTMLend {
+  my $fh    = shift;
+
+print $fh <<END;
+
+  </body>
+</html>
+END
+}
+
 
 
 1;

@@ -1,56 +1,63 @@
 #!/usr/bin/perl
-# (c) 2010 Magnus Bjursell
+# (c) 2011 Magnus Bjursell
 
 # standard module usage
 use strict;
+use Getopt::Long;
+use Pod::Usage;
+use Cwd 'abs_path';
+use FindBin;
+use Data::Dumper;
 use IO::Handle;
 use feature ":5.10";
 use File::stat;
 use Term::ReadKey;
 
-
 # custom module usage
-use lib '/home/magnus.bjursell/script/modules';
-use myFileIO qw(:basic);
-use myMathStat qw(max min round);
-use mySeqAnalysis qw(translate IUPAC2baseA reverseComplement returnOverlap readKgXrefHR returnFaFHandIndex returnSequenceFromFasta complementA returnChrSortIndex getFileHeader read_bed_variant_file readGtpInfo readFilterInfo);
-
-
-# Read input and setup global variables
-my $progName; if ( $0 =~ /([^\/]+)$/ ) { $progName = $1; }
-my $usage = "\nUsage: $progName [variation bed] [Output dir] \n\n";
-
-my $bedFN   = shift; die $usage unless -e $bedFN;
-my $outDN   = shift; die $usage unless -d $outDN;
+use lib $FindBin::Bin;
+use mySharedFunctions qw(:basic myBasename fixPath isCanonicalChr chrTranslate returnGenomeSize returnOverlap read_bed_variant_file returnFaFHandIndex);
+#use lib '/home/magnus.bjursell/script/modules';
+#use myFileIO qw(:basic);
+#use myMathStat qw(max min round);
+#use mySeqAnalysis qw(translate IUPAC2baseA reverseComplement returnOverlap readKgXrefHR returnFaFHandIndex returnSequenceFromFasta complementA returnChrSortIndex getFileHeader read_bed_variant_file readGtpInfo readFilterInfo);
 
 my $dataHR = {};
 my $infoHR = {};
 
-$dataHR->{'analysisDatabase'}    = "ucscKnownGene";  # "ucscKnownGene", "ensembl", "refSeq_name2AsGtp", "ucscKnownGene_kgXref_geneSymbol", "ucscKnownGene_kgXref_spID"
-#$dataHR->{'analysisDatabaseGTP'} = {'GTPfile' => '', 'geneCol' => ''}; # "ucscKnownGene", "ensembl", "refSeq_name2AsGtp"
-$dataHR->{'filesHR'}       = returndatabaseFiles($dataHR, $dataHR->{'analysisDatabase'}, "dbSNP_131");
-$dataHR->{'paramHR'}       = {'ssLen' => 2, 'upsLen' => 1000, 'dnsLen' => 1000,};
-$dataHR->{'faiHR'}         = returnFaFHandIndex($dataHR->{'filesHR'}{'refFN'});
-$dataHR->{'kgXrefHR'}      = readKgXrefHR();
-$dataHR->{'geneFilterHR'}  = readFilterInfo("/home/magnus.bjursell/hg/knownGene_GRCh37_hg19/knownCanonical.txt", "id");
+$infoHR->{'configHR'} = readConfigFile();
+$infoHR->{'optHR'}    = {};
 
+
+# Read input and setup global variables
+GetOptions ($infoHR->{'optHR'}, 'varBed=s', 'outdir=s', 'outdb=s', 'help', 'verbose') or pod2usage(2);
+pod2usage(1) if $infoHR->{'optHR'}{'h'} or $infoHR->{'optHR'}{'help'};
+#loadDefaults($infoHR);
+
+pod2usage("Cannot find the variant bed file: $infoHR->{'optHR'}{'varBed'}.") unless -f $infoHR->{'optHR'}{'varBed'};
+pod2usage("Cannot find output directory: $infoHR->{'optHR'}{'outdir'}.") unless -d $infoHR->{'optHR'}{'outdir'};
+#pod2usage("Cannot find output database: $infoHR->{'optHR'}{'outdb'}.") unless -d $infoHR->{'optHR'}{'outdb'}; # Should work for sqlite3 db check
+
+$dataHR->{'paramHR'}       = {'ssLen' => 2, 'upsLen' => 1000, 'dnsLen' => 1000,};
+$dataHR->{'faiHR'}         = returnFaFHandIndex($infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'});
+$dataHR->{'kgXrefHR'}      = readKgXrefHR($infoHR->{'configHR'}{'PATH'}{'UCSC_KGXREF'});
+$dataHR->{'geneFilterHR'}  = readFilterInfo($infoHR->{'configHR'}{'PATH'}{'UCSC_KNOWNGENE_CANONICAL'}, "id");
 
 
 # Setup output stuff
-setupOutput_parseSampleName($infoHR, $outDN, $bedFN);
+setupOutput_parseSampleName($infoHR, $infoHR->{'optHR'}{'outdir'}, $infoHR->{'optHR'}{'varBed'});
 
 
 # Load variants from file
-loadVariationData($dataHR, $bedFN);
+loadVariationData($dataHR, $infoHR->{'optHR'}{'varBed'});
 
 
 { # Comparing to SNP file
   local $| = 1;
-  print STDERR "Comparing to $dataHR->{'filesHR'}{'kVarFN'} known variations file\n";
-  my $kVarFH = myOpen($dataHR->{'filesHR'}{'kVarFN'});
+  print STDERR "Comparing to $infoHR->{'configHR'}{'PATH'}{'dbSNP_131'} known variations file\n";
+  my $kVarFH = myOpen($infoHR->{'configHR'}{'PATH'}{'dbSNP_131'});
   while ( my $line = <$kVarFH> ) {
     print STDERR "." if $. % 1000000 == 0;
-    my $kVarHR = parseKVar($line, $dataHR->{'filesHR'}{'kVarFN'});
+    my $kVarHR = parseKVar($line, $infoHR->{'configHR'}{'PATH'}{'dbSNP_131'});
 #    next unless $kVarHR->{'weight'} == 1;
     next if $kVarHR->{'obs'} eq "lengthTooLong";
     $infoHR->{'no_valid_var_in_file'}++;
@@ -74,12 +81,12 @@ loadVariationData($dataHR, $bedFN);
 
 { # Comparing to gene file
   local $| = 1;
-  print STDERR "Comparing to $dataHR->{'filesHR'}{'transFN'} gene file\n";
+  print STDERR "Comparing to $infoHR->{'configHR'}{'PATH'}{'UCSC_KNOWNGENE_FULL'} gene file\n";
   my $okStatCodes = {'cmpl' => 1, 'none' => 1,};
-  my $transFH = myOpen($dataHR->{'filesHR'}{'transFN'});
+  my $transFH = myOpen($infoHR->{'configHR'}{'PATH'}{'UCSC_KNOWNGENE_FULL'});
   while ( my $line = <$transFH> ) {
     print STDERR "." if $. % 10000 == 0;
-    my $transHR = parseGene($line, $dataHR->{'filesHR'}{'transFN'});
+    my $transHR = parseGene($line, $infoHR->{'configHR'}{'PATH'}{'UCSC_KNOWNGENE_FULL'});
     next if defined($dataHR->{'geneFilterHR'}) and not defined($dataHR->{'geneFilterHR'}{$transHR->{'id'}});
     next if ( defined($transHR->{'cStaSt'}) and $okStatCodes->{$transHR->{'cStaSt'}} != 1 ) or ( defined($transHR->{'cEndSt'}) and $okStatCodes->{$transHR->{'cEndSt'}} != 1 );
     next unless returnCDSlen($transHR) % 3 == 0 or $transHR->{'cSta'} == $transHR->{'cEnd'};
@@ -101,7 +108,7 @@ loadVariationData($dataHR, $bedFN);
 
 
 print "Input summary:\n";
-printf("   - %d input variations in $bedFN file\n",  scalar(keys %{$dataHR->{'varHR'}}));
+printf("   - %d input variations in $infoHR->{'optHR'}{'varBed'} file\n",  scalar(keys %{$dataHR->{'varHR'}}));
 printf("   - %d known variations in file\n",  $infoHR->{'no_valid_var_in_file'});
 printf("   - %d transcripts in file (after filterring)\n",  $infoHR->{'no_valid_trans_in_file'});
 print "\n";
@@ -249,8 +256,8 @@ my $allKeysHR = {'all' => 0, 'all_recessive' => 1, 'all_homozygous' => 2,
 
 }
 
-printf("%d (%0.3f) known variants in $bedFN file\n", $infoHR->{'no_known_vars'}, $infoHR->{'no_known_vars'} / scalar(keys %{$dataHR->{'varHR'}}));
-printf("%d (%0.3f) novel variants in $bedFN file\n", $infoHR->{'no_novel_vars'}, $infoHR->{'no_novel_vars'} / scalar(keys %{$dataHR->{'varHR'}}));
+printf("%d (%0.3f) known variants in $infoHR->{'optHR'}{'varBed'} file\n", $infoHR->{'no_known_vars'}, $infoHR->{'no_known_vars'} / scalar(keys %{$dataHR->{'varHR'}}));
+printf("%d (%0.3f) novel variants in $infoHR->{'optHR'}{'varBed'} file\n", $infoHR->{'no_novel_vars'}, $infoHR->{'no_novel_vars'} / scalar(keys %{$dataHR->{'varHR'}}));
 print "\n\n";
 
 printf("Number of transcripts where no gene id was found (skipped in the gene output): %d\n", $infoHR->{'skipped_no_gene_IDs'});
@@ -272,6 +279,17 @@ exit;
 #  #  #  S U B S #  #  #
 ########################
 ########################
+
+########################
+# Load default values
+########################
+
+sub loadDefaults {
+  my $infoHR = shift;
+
+#  $infoHR->{'optHR'}{'minCoverage'}    = 8  unless $infoHR->{'optHR'}{'minCoverage'};
+}
+
 
 ########################
 # Write data to files
@@ -365,103 +383,6 @@ sub readKgXref {
 }
 
 
-sub writeFullOutputFileGenesXML {
-  my $dataHR  = shift;
-  my $infoHR  = shift;
-  my $geneGrp = shift;
-  my $annot   = shift;
-
-  my $fullOutFH = myOpenRW($infoHR->{'outDirs'}{'base'} . "/" . join(".", @{$infoHR->{'sampleInfo'}}{'name', 'run'}, $geneGrp, $annot, "fullOut", "xml"));
-  print $fullOutFH "<?xml version=\"1.0\"?>\n";
-
-  my $level = 1;
-
-  print $fullOutFH returnXMLtag("ALL_GENES", "_<", $level - 1, "") . "\n";
-  foreach my $geneID ( keys %{$dataHR->{'genes'}{$geneGrp}{$annot}} ) {
-    my $level = 2;
-    print $fullOutFH returnXMLtag("GENE", "_<", $level - 1, "id=\"$geneID\"") . "\n";
-    print $fullOutFH returnXMLtag("GENE_ID", $geneID, $level) . "\n";
-    print $fullOutFH returnXMLtag("SAMPLE", $infoHR->{'sampleInfo'}{'name'}, $level) . "\n";
-    print $fullOutFH returnXMLtag("GENE_DESC", join("; ",keys %{$dataHR->{'geneDescriptionByGeneIDHR'}{$geneID}}), $level) . "\n";
-    print $fullOutFH returnXMLtag("GENE_GRP", $geneGrp, $level) . "\n";
-    print $fullOutFH returnXMLtag("GENE_ANNOT", $annot, $level) . "\n";
-
-    foreach my $transHR ( @{$dataHR->{'genes'}{$geneGrp}{$annot}{$geneID}} ) {
-      my $level = 3;
-      my $transID = $transHR->{'id'};
-      print $fullOutFH returnXMLtag("TRANSCRIPT", "_<", $level - 1, "id=\"$transID\"") . "\n";
-      print $fullOutFH returnXMLtag("TRANSCRIPT_ID", $transID, $level) . "\n";
-      print $fullOutFH returnXMLtag("SAMPLE", $infoHR->{'sampleInfo'}{'name'}, $level) . "\n";
-      print $fullOutFH returnXMLtag("ADDITIONAL_TRANSCRIPT_IDS", join(", ", values %{$dataHR->{'kgXrefHR'}{$transID}}), $level) . "\n";
-      writeXMLtagSet($fullOutFH, {'lenNT' => 0, 'lenAA' => 1,}, $transHR, $level);
-      writeXMLtagSet($fullOutFH, getFileHeader("ucsc_kgXref"), $dataHR->{'kgXrefHR'}{$transID}, $level);
-      writeXMLtagSet($fullOutFH, getFileHeader($dataHR->{'filesHR'}{'transFN'}), $transHR, $level, {'id' => 1,});
-      my $mutStrHR = $transHR->{'info'}{'ns'}{'mutStrHR'}; my $mutStr = join("; ", map { "$_ ($mutStrHR->{$_}{'varType'}, $mutStrHR->{$_}{'homHet'}, $mutStrHR->{$_}{'pph_prediction'})" } sort { $mutStrHR->{$a}{'pos'} <=> $mutStrHR->{$b}{'pos'} } keys %{$mutStrHR});
-      print $fullOutFH returnXMLtag("mutStr", "$infoHR->{'sampleInfo'}{'name'}: $mutStr", $level) . "\n";
-      print $fullOutFH returnXMLtag("SeqNT", uc($transHR->{'seqHR'}{'seq'}), $level) . "\n";
-      print $fullOutFH returnXMLtag("SeqAA", translate(uc($transHR->{'seqHR'}{'seq'})), $level) . "\n";
-
-      foreach my $varID ( keys %{$transHR->{'annot'}{$annot}} ) {
-        my $level = 4;
-        my $varHR = $transHR->{'annot'}{$annot}{$varID};
-        print $fullOutFH returnXMLtag("VARIANT", "_<", $level - 1, "id=\"$varID\"") . "\n";
-        print $fullOutFH returnXMLtag("VARIANT_ID", $varID, $level) . "\n";
-        print $fullOutFH returnXMLtag("SAMPLE", $infoHR->{'sampleInfo'}{'name'}, $level) . "\n";
-        print $fullOutFH returnXMLtag("SAMPLE_DATA", "$infoHR->{'sampleInfo'}{'name'}: $varHR->{'descr'}", $level) . "\n";
-        writeXMLtagSet($fullOutFH, { 'chr' => 0, 'sta' => 1, 'end' => 2, }, $varHR, $level); #'qual' => 4, 
-        writeXMLtagSet($fullOutFH, { 'ref' => 0, 'var' => 1, }, $varHR->{'info'}, $level); # 'depth' => 2, 'cntStr' => 3, 'homHet' => 4, 'varType' => 5 
-
-        if ( ref($varHR->{'info'}{'ns'}{$transID}) =~ /HASH/ ) {
-          writeXMLtagSet($fullOutFH, { 'exonNo' => 0, 'relSta' => 1, 'snpFrame' => 2, 'genBase' => 3, 'refCdn' => 4, 'refAA' => 5 }, $varHR->{'info'}{'ns'}{$transID}{'ref'}, $level);
-          foreach my $allele ( sort keys %{$varHR->{'info'}{'ns'}{$transID}{'alt'}} ) {
-            my $level = 5;
-            print $fullOutFH returnXMLtag("ALLELE", "_<", $level - 1, "id=\"$allele\"") . "\n";
-            writeXMLtagSet($fullOutFH, { 'snpCdn' => 0, 'snpAA' => 1, 'pph_prediction' => 2 }, $varHR->{'info'}{'ns'}{$transID}{'alt'}{$allele}, $level);
-            print $fullOutFH returnXMLtag("SeqNT", uc($varHR->{'info'}{'ns'}{$transID}{'alt'}{$allele}{'mutSeq'}), $level) . "\n";
-            print $fullOutFH returnXMLtag("SeqAA", translate(uc($varHR->{'info'}{'ns'}{$transID}{'alt'}{$allele}{'mutSeq'})), $level) . "\n";
-            print $fullOutFH returnXMLtag("ALLELE", "_>", $level - 1) . "\n";
-          }
-        }
-        print $fullOutFH returnXMLtag("VARIANT", "_>", $level - 1) . "\n";
-      }
-      print $fullOutFH returnXMLtag("TRANSCRIPT", "_>", $level - 1) . "\n";
-    }
-    print $fullOutFH returnXMLtag("GENE", "_>", $level - 1) . "\n";
-  }
-  print $fullOutFH returnXMLtag("ALL_GENES", "_>", $level - 1, "") . "\n";
-  close($fullOutFH);
-}
-
-sub returnXMLtag {
-  my $tagName = shift;
-  my $data    = shift;
-  my $level   = shift;
-  my $attrStr = shift; $attrStr = length($attrStr) > 0 ? " $attrStr" : "";
-
-  given($data) {
-    when ( /^_<$/ )  { return "\t" x $level . "<$tagName$attrStr>"; }
-    when ( /^_>$/ )  { return "\t" x $level . "</$tagName>"; }
-    when ( /^_<>$/ ) { return "\t" x $level . "<$tagName$attrStr/>"; }
-    default          { foreach my $c ( ["\&", "&amp;"], ["\"", "&quot;"], ["\'", "&apos;"], ["\<", "&lt;"], ["\>", "&gt;"] ) { $data =~ s/$c->[0]/$c->[1]/g }; return "\t" x $level . "<$tagName$attrStr>$data</$tagName>"; }
-  }
-
-  return "\t" x $level . "<$tagName$attrStr>$data</$tagName>";
-}
-
-sub writeXMLtagSet {
-  my $fh     = shift;
-  my $hdrHR  = shift;
-  my $tagHR  = shift;
-  my $level  = shift;
-  my $skipHR = shift;
-
-  foreach my $colHdr ( sort { $hdrHR->{$a} <=> $hdrHR->{$b} } keys %{$hdrHR} ) {
-    next if exists($skipHR->{$colHdr});
-    print $fh returnXMLtag($colHdr, $tagHR->{$colHdr}, $level) . "\n";
-  }
-
-}
-
 sub writeAnnotVarsCombinationsToFile {
   my $infoHR  = shift;
 
@@ -471,6 +392,7 @@ sub writeAnnotVarsCombinationsToFile {
   print $outCombFH "\n\n\n";
   close($outCombFH);
 }
+
 
 sub printNoVarsTypes {
   my $infoHR  = shift;
@@ -777,6 +699,13 @@ sub detectNsTrans {
 
       warn "\nDuplicate gene with identical ($transHR->{'id'}) id overlap same SNP ($varHR->{'line'})\n\n" if exists($varHR->{'info'}{'ns'}{$transHR->{'id'}}{'alt'}{$allele});
       $varHR->{'info'}{'ns'}{$transHR->{'id'}}{'alt'}{$allele} = {'allele' =>  $allele, 'snpCdn' =>  $snvInfoHR->{'snpCdn'}, 'snpAA' =>  $snvInfoHR->{'snpAA'}, 'mutSeq' => $mutSeq};
+
+      my $refHR = $varHR->{'info'}{'ns'}{$transHR->{'id'}}{'ref'};
+      my $altHR = $varHR->{'info'}{'ns'}{$transHR->{'id'}}{'alt'};
+      $varHR->{'info'}{'ns'}{$transHR->{'id'}}{'alt'}{$allele}{'ntMutStr'} = sprintf("%s%d%s\t", ($transHR->{'str'} eq "-" ? complement($refHR->{'genBase'}) : $refHR->{'genBase'}), $refHR->{'relSta'} + 1, $allele);
+      $varHR->{'info'}{'ns'}{$transHR->{'id'}}{'alt'}{$allele}{'aaMutStr'} = sprintf("%s%d%s", $refHR->{'refAA'}, int($refHR->{'relSta'} / 3) + 1, $altHR->{$allele}{'snpAA'});
+
+
 #      my $mutStrAA = join("", @{$varHR->{'info'}{'ns'}{$transHR->{'id'}}{'ref'}}{'refAA', 'relStaAA_1'}) . $varHR->{'info'}{'ns'}{$transHR->{'id'}}{'alt'}{$allele}{'snpAA'};
 #      $transHR->{'info'}{'ns'}{'mutStrHR'}{$mutStrAA}{'homHet'} = $varHR->{'info'}{'homHet'};
     }
@@ -837,64 +766,6 @@ sub parseBedFileName {
     warn "Cannot parse sample name and run name, setting to \'sample\' and \'run\', respectively\n";
   }
   return $smplInfoHR;
-}
-
-
-##############################################
-# Output file setup and writing
-##############################################
-
-sub returndatabaseFiles {
-  my $dataHR = shift;
-  my $geneDB = shift;
-  my $kVarDB = shift;
-  my $dbFilesHR = {};
-
-  $dbFilesHR->{'bioBDdir'} = "/home/magnus.bjursell/hg";
-  $dbFilesHR->{'refFN'}    = "$dbFilesHR->{'bioBDdir'}/GRCh37_hg19/GRCh37_hg19_allChr_nl.fa";
-
-  if ( $geneDB =~ /^ensembl$/ ) {
-    $dbFilesHR->{'transFN'} = "$dbFilesHR->{'bioBDdir'}/ensGene_GRCh37_hg19/ensGene.txt";
-    $dbFilesHR->{'gtpFN'}   = "$dbFilesHR->{'bioBDdir'}/ensGene_GRCh37_hg19/ensGtp.txt";
-    $dataHR->{'gtpHR'}      = readGtpInfo($dbFilesHR->{'gtpFN'}, "transcript", "gene");
-
-  } elsif ( $geneDB =~ /^ucscKnownGene$/ ) {
-    $dbFilesHR->{'transFN'} = "$dbFilesHR->{'bioBDdir'}/knownGene_GRCh37_hg19/knownGene.txt";
-    $dbFilesHR->{'gtpFN'}   = "$dbFilesHR->{'bioBDdir'}/knownGene_GRCh37_hg19/knownToRefSeq.txt";
-    #$dbFilesHR->{'gtpFN'}   = "$dbFilesHR->{'bioBDdir'}/knownGene_GRCh37_hg19/kgXref.txt";
-    $dataHR->{'gtpHR'}      = readGtpInfo($dbFilesHR->{'gtpFN'}, "name", "value");
-
-  } elsif ( $geneDB =~ /^ucscKnownGene_kgXref_spID$/ ) {
-    $dbFilesHR->{'transFN'} = "$dbFilesHR->{'bioBDdir'}/knownGene_GRCh37_hg19/knownGene.txt";
-    $dbFilesHR->{'gtpFN'}   = "$dbFilesHR->{'bioBDdir'}/knownGene_GRCh37_hg19/kgXref.txt";
-    $dataHR->{'gtpHR'}      = readGtpInfo($dbFilesHR->{'gtpFN'}, "kgID", "spID");
-
-  } elsif ( $geneDB =~ /^ucscKnownGene_kgXref_geneSymbol$/ ) {
-    $dbFilesHR->{'transFN'} = "$dbFilesHR->{'bioBDdir'}/knownGene_GRCh37_hg19/knownGene.txt";
-    $dbFilesHR->{'gtpFN'}   = "$dbFilesHR->{'bioBDdir'}/knownGene_GRCh37_hg19/kgXref.txt";
-    $dataHR->{'gtpHR'}      = readGtpInfo($dbFilesHR->{'gtpFN'}, "kgID", "geneSymbol");
-
-  } elsif ( $geneDB =~ /^refSeq$/ ) {
-    $dbFilesHR->{'transFN'} = "$dbFilesHR->{'bioBDdir'}/refGene_GRCh37_hg19/refGene.txt";
-    $dbFilesHR->{'gtpFN'}   = "$dbFilesHR->{'bioBDdir'}/refGene_GRCh37_hg19/kgXref.txt";
-    $dataHR->{'gtpHR'}      = readGtpInfo($dbFilesHR->{'gtpFN'}, "transcript", "gene");
-
-  } elsif ( $geneDB =~ /^refSeq_name2AsGtp$/ ) {
-    $dbFilesHR->{'transFN'} = "$dbFilesHR->{'bioBDdir'}/refGene_GRCh37_hg19/refGene.txt";
-    $dataHR->{'gtpHR'}      = readGtpInfo($dbFilesHR->{'transFN'}, "id", "id2");
-
-  } else {
-    die "\n$geneDB transcript database is not found\n\n";
-
-  }
-
-  if ( $kVarDB =~ /^dbSNP_131/ ) {
-    $dbFilesHR->{'kVarFN'} = "$dbFilesHR->{'bioBDdir'}/snp_GRCh37_hg19/snp131.noAlt.sorted.txt";
-  } else {
-    die "\n$geneDB variation database is not found\n\n";
-  }
-
-  return $dbFilesHR;
 }
 
 
@@ -1097,5 +968,52 @@ sub runPolyPhen2_parseRet {
 
   print STDERR "\nDone\n\n";
 }
+
+
+
+
+#__END__
+
+
+=head1 NAME
+
+annotate_variants.pl - Annotate variants
+
+=head1 SYNOPSIS
+
+annotate_variants.pl [options]
+
+  Options:
+   --help            Brief help message (not yet implemented)
+   --verbose         Write some additional output (not yet implemented)
+   --varBed          Input variant bed file [required]
+   --outdir          Output directory [required]
+   --outdb           Output database
+
+  The input variant bed file should use this specific format:
+  chr1    866318  866319  G=>A(62;A:62)   214     +
+  chr1    866510  866510  C=>*/+CCCT(99;*:68,+CCCT:31)    2021    +
+  chr1    870902  870903  T=>C(27;A:1,C:26)       105     +
+  chr1    871041  871041  C=>*/+A(133;*:70,+A:63) 2063    +
+  chr1    876498  876499  A=>G(36;D:4,G:32)       123     +
+  chr1    884100  884101  A=>M(53;A:37,C:14,D:2)  134     +
+
+Hopefully I will document this format better in the future...
+
+=cut
+
+#=head1 OPTIONS
+
+#=over 8
+
+#=item B<-help>
+
+#Print a brief help message and exits.
+
+#=back
+
+#=head1 DESCRIPTION
+
+
 
 
