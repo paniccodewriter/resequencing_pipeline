@@ -22,7 +22,7 @@ $infoHR->{'optHR'}    = {};
 
 
 # Read input and setup global variables
-GetOptions ($infoHR->{'optHR'}, 'ref=s', 'bed=s', 'bam=s', 'outdir=s', 'outPrefix=s', 'outCoverage=s', 'minCoverage=s', 'minConcQual=s', 'minMappingQual=s', 'html', 'help', 'verbose') or pod2usage(2);
+GetOptions ($infoHR->{'optHR'}, 'ref=s', 'bed=s', 'bam=s', 'outdir=s', 'outPrefix=s', 'outCoverage=s', 'outHqCoverage=s', 'minCoverage=s', 'minConcQual=s', 'minMappingQual=s', 'html', 'help', 'verbose') or pod2usage(2);
 pod2usage(1) if $infoHR->{'optHR'}{'h'} or $infoHR->{'optHR'}{'help'};
 loadDefaults($infoHR);
 
@@ -71,6 +71,7 @@ getGenomeSize($infoHR);
 {
   local $| = 1;
   my $outBedFH = myOpenRW($infoHR->{'optHR'}{'outCoverage'}) if $infoHR->{'optHR'}{'outCoverage'};
+  my $outHqBedFH = myOpenRW($infoHR->{'optHR'}{'outHqCoverage'}) if $infoHR->{'optHR'}{'outHqCoverage'};
   print "Reading pileup file; printing one dot per 10,000,000 lines)";
 
   my $noDone = 1;
@@ -98,6 +99,7 @@ getGenomeSize($infoHR);
         $infoHR->{'highqual_coverage'}{'all'}++; 
         $infoHR->{'highqual_coverage'}{'bed'}++; 
         $infoHR->{'highqual_coverage'}{'chr'}{$cols[0]}++;
+        printf $outHqBedFH ("%s\t%d\t%d\t%s\t%s\t%d\n", $cols[0], $cols[1], $cols[1] + 1, join(":", @cols[0..5]), "+",$cols[5]) if $infoHR->{'optHR'}{'outHqCoverage'};
       }
     } else {
       $infoHR->{'coverage'}{'all'}{$cols[5]}++;
@@ -108,11 +110,13 @@ getGenomeSize($infoHR);
       if ( $cols[5] >= $infoHR->{'optHR'}{'minCoverage'} and $cols[3] >= $infoHR->{'optHR'}{'minConcQual'} and $cols[4] >= $infoHR->{'optHR'}{'minMappingQual'} ) {
         $infoHR->{'highqual_coverage'}{'all'}++;
         $infoHR->{'highqual_coverage'}{'chr'}{$cols[0]}++;
+        printf $outHqBedFH ("%s\t%d\t%d\t%s\t%s\t%d\n", $cols[0], $cols[1], $cols[1] + 1, join(":", @cols[0..5]), "+",$cols[5]) if $infoHR->{'optHR'}{'outHqCoverage'};
       }
     }
   }
   close($pipe);
   close($outBedFH) if $infoHR->{'optHR'}{'outCoverage'};
+  close($outHqBedFH) if $infoHR->{'optHR'}{'outHqCoverage'};
   print "Done\n\n";
 
 }
@@ -283,6 +287,7 @@ print "Done\n\n";
 if ( $infoHR->{'optHR'}{'html'} ) { # Print information to html file
 
 #  my $htmlFH = myOpenRW("$infoHR->{'optHR'}{'outdir_results'}/" . join(".", $infoHR->{'optHR'}{'prefix'}, $infoHR->{'optHR'}{'suffix'}, 'summary', 'html'));
+  $infoHR->{'plotParams'} = {'XimgSize' => '1200', 'YimgSize' => '800', };
   my $htmlFH = myOpenRW(fixPath(($infoHR->{'optHR'}{'outdir'} ? "$infoHR->{'optHR'}{'outdir'}/" : "") . "$infoHR->{'optHR'}{'outPrefix'}.summary.html"));
   writeHTMLheader($htmlFH, "Basic sequencing data and filtering information");
 
@@ -323,7 +328,7 @@ END
   printf $htmlFH ("      <tr><td></td></tr>\n");
 
   printf $htmlFH ("      <tr><td>Number of high qual positions within bed regions</td><td align=\"right\">%s</td></tr>\n", insertThousandSeparator($infoHR->{'highqual_coverage'}{'bed'}));
-  printf $htmlFH ("      <tr><td>Percent of bed region with high qual coverage</td><td align=\"right\">%0.3f</td></tr>\n", 100 * $infoHR->{'highqual_coverage'}{'bed'} / $infoHR->{'no_bed_positions'});
+  printf $htmlFH ("      <tr style=\"font-weight: bold;\"><td>Percent of bed region with high qual coverage</td><td align=\"right\">%0.3f</td></tr>\n", 100 * $infoHR->{'highqual_coverage'}{'bed'} / $infoHR->{'no_bed_positions'});
   printf $htmlFH ("    </table>\n");
   print  $htmlFH  "    </br>\n";
 
@@ -332,8 +337,8 @@ END
   printf $htmlFH ("    <table border=\"1\">\n");
   printf $htmlFH ("      <tr><td>Total coverage in bed region</td><td align=\"right\">%s</td></tr>\n", insertThousandSeparator($infoHR->{'total_coverage'}{'bed'}));
   if ( $infoHR->{'total_coverage'}{'bed'} ) {
-    printf $htmlFH ("      <tr><td>Average coverage in bed regions</td><td align=\"right\">%0.3f</td></tr>\n", $infoHR->{'total_coverage'}{'bed'} / $infoHR->{'no_bed_positions'});
-    printf $htmlFH ("      <tr><td>Base 80 coverage</td><td align=\"right\">%0.3f</td></tr>\n", $infoHR->{'base80_coverage'});
+    printf $htmlFH ("      <tr style=\"font-weight: bold;\"><td>Average coverage in bed regions</td><td align=\"right\">%0.3f X</td></tr>\n", $infoHR->{'total_coverage'}{'bed'} / $infoHR->{'no_bed_positions'});
+    printf $htmlFH ("      <tr><td>Base 80 coverage</td><td align=\"right\">%0.3f X</td></tr>\n", $infoHR->{'base80_coverage'});
     printf $htmlFH ("      <tr><td>Base 80 penalty</td><td align=\"right\">%0.3f</td></tr>\n", ( $infoHR->{'total_coverage'}{'bed'} / $infoHR->{'no_bed_positions'} ) / $infoHR->{'base80_coverage'});
   } else {
     printf $htmlFH ("      <tr style=\"color: red;\"><td>No coverage in bed regions</td><td align=\"right\">%0.3f</td></tr>\n", 0);
@@ -359,22 +364,6 @@ END
   print $htmlFH "    </table>\n";
   print $htmlFH "    </br>\n";
 
-  {
-    print $htmlFH "    <h2>Coverage statistics for the genome and positions with any coverage</h2>\n";
-#    print $htmlFH "    </br>\n";
-    my $FNonly = writeCovrHistoPerGenomePlot($infoHR, 500);
-    print $htmlFH "    <img src=\"$FNonly\" alt=\"Genome coverage\" />\n";
-    print $htmlFH "    </br>\n";
-  }
-
-  {
-    print $htmlFH "    <h2>Coverage statistics for the genome and positions with any coverage (zoomed X axes)</h2>\n";
-#    print $htmlFH "    </br>\n";
-    my $FNonly = writeCovrHistoPerGenomePlot($infoHR, 100);
-    print $htmlFH "    <img src=\"$FNonly\" alt=\"Genome coverage\" />\n";
-    print $htmlFH "    </br>\n";
-  }
-
 
   {
     print $htmlFH "    <h2>Coverage statistics for the bed regions</h2>\n";
@@ -389,6 +378,23 @@ END
 #    print $htmlFH "    </br>\n";
     my $FNonly = writeCovrHistoPerBedPlot($infoHR, 100);
     print $htmlFH "    <img src=\"$FNonly\" alt=\"Bed region coverage\" />\n";
+    print $htmlFH "    </br>\n";
+  }
+
+
+  {
+    print $htmlFH "    <h2>Coverage statistics for the genome and positions with any coverage</h2>\n";
+#    print $htmlFH "    </br>\n";
+    my $FNonly = writeCovrHistoPerGenomePlot($infoHR, 500);
+    print $htmlFH "    <img src=\"$FNonly\" alt=\"Genome coverage\" />\n";
+    print $htmlFH "    </br>\n";
+  }
+
+  {
+    print $htmlFH "    <h2>Coverage statistics for the genome and positions with any coverage (zoomed X axes)</h2>\n";
+#    print $htmlFH "    </br>\n";
+    my $FNonly = writeCovrHistoPerGenomePlot($infoHR, 100);
+    print $htmlFH "    <img src=\"$FNonly\" alt=\"Genome coverage\" />\n";
     print $htmlFH "    </br>\n";
   }
 
@@ -449,12 +455,14 @@ sub checkSamTools {
 
 sub writeCovrHistoPerGenomePlot {
   my $infoHR = shift;
-  my $maxX   = shift; $maxX = "*" unless $maxX;
+  my $maxX   = shift; $maxX = "*" unless $maxX > 0;
+  my $maxX_fn = $maxX eq "*" ? "star_" . int(rand(1000)) : $maxX;
+  my $outFN  = $infoHR->{'outFN'}{'img_coverage_histogram_per_genome'}; $outFN =~ s/(\.[^\.]+)$/\.$maxX_fn$1/;
   my $gnuPlotPipe = myOpen("| gnuplot");
   print $gnuPlotPipe <<END;
     set size 1, 1
-    set term png size 800, 600
-    set output "$infoHR->{'outFN'}{'img_coverage_histogram_per_genome'}"
+    set term png size $infoHR->{'plotParams'}{'XimgSize'}, $infoHR->{'plotParams'}{'YimgSize'}
+    set output "$outFN"
 
     set title "Genome-based coverage statistics"
     set boxwidth 0.9 relative
@@ -490,17 +498,19 @@ sub writeCovrHistoPerGenomePlot {
 
 END
   close($gnuPlotPipe);
-  return myBasename($infoHR->{'outFN'}{'img_coverage_histogram_per_genome'});
+  return myBasename($outFN);
 }
 
 sub writeCovrHistoPerBedPlot {
   my $infoHR = shift;
   my $maxX   = shift; $maxX = "*" unless $maxX;
+  my $maxX_fn = $maxX eq "*" ? "star_" . int(rand(1000)) : $maxX;
+  my $outFN  = $infoHR->{'outFN'}{'img_coverage_histogram_per_bed'}; $outFN =~ s/(\.[^\.]+)$/\.$maxX_fn$1/;
   my $gnuPlotPipe = myOpen("| gnuplot");
   print $gnuPlotPipe <<END;
     set size 1, 1
-    set term png size 800, 600
-    set output "$infoHR->{'outFN'}{'img_coverage_histogram_per_bed'}"
+    set term png size $infoHR->{'plotParams'}{'XimgSize'}, $infoHR->{'plotParams'}{'YimgSize'}
+    set output "$outFN"
 
     set title "Bed region-based coverage statistics"
     set boxwidth 0.9 relative
@@ -534,12 +544,14 @@ sub writeCovrHistoPerBedPlot {
 
 END
   close($gnuPlotPipe);
-  return myBasename($infoHR->{'outFN'}{'img_coverage_histogram_per_bed'});
+  return myBasename($outFN);
 }
 
 sub writeCovrHistoPerChrPlot {
   my $infoHR = shift;
   my $maxX   = shift; $maxX = "*" unless $maxX;
+  my $maxX_fn = $maxX eq "*" ? "star_" . int(rand(1000)) : $maxX;
+  my $outFN  = $infoHR->{'outFN'}{'img_coverage_histogram_per_chromosome'}; $outFN =~ s/(\.[^\.]+)$/\.$maxX_fn$1/;
   my $gnuPlotPipe = myOpen("| gnuplot");
 
   my $plotStr = ""; my $col = 2;
@@ -550,10 +562,10 @@ sub writeCovrHistoPerChrPlot {
 
   print $gnuPlotPipe <<END;
     set size 1, 1
-    set term png size 800, 600
-    set output "$infoHR->{'outFN'}{'img_coverage_histogram_per_chromosome'}"
+    set term png size $infoHR->{'plotParams'}{'XimgSize'}, $infoHR->{'plotParams'}{'YimgSize'}
+    set output "$outFN"
 
-    set title "Bed region-based coverage statistics"
+    set title "Chromosome-based coverage statistics"
     set boxwidth 0.9 relative
     set style fill solid 1.0 border -1
     set style line 1 lt 2 lw 2 pt 2 ps 0.5
@@ -572,19 +584,20 @@ sub writeCovrHistoPerChrPlot {
     set yrange [0:*]
     set ytics border
     set mytics
-    set ylabel "Number of positions"
-
-    set y2range [0:*]
-    set y2tics border
-    set y2tics
-    set my2tics
-    set y2label "Percent"
+    set ylabel "Fraction of positions"
 
     plot $plotStr
 
 END
+
+#    set y2range [0:*]
+#    set y2tics border
+#    set y2tics
+#    set my2tics
+#    set y2label "Percent"
+
   close($gnuPlotPipe);
-  return myBasename($infoHR->{'outFN'}{'img_coverage_histogram_per_chromosome'});
+  return myBasename($outFN);
 }
 
 
@@ -606,6 +619,7 @@ calculate_coverage_statistics.pl [options]
    --outPrefix       Output file prefix, bam file name will be used if not supplied
    --outCoverage     Output bed file for coverage (will be large; contains
                      coverage information for each position with coverage [optional]
+   --outHqCoverage   Output bed file for high quality coverage (may be large)
    --html            Generate html output file
    --ref             Reference sequence fasta file [required]
    --bed             Bed file describing the regions [required]

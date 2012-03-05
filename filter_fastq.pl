@@ -24,7 +24,7 @@ my $debug  = 0;
 
 
 # Read input and setup global variables
-GetOptions ($infoHR->{'optHR'}, 'fq1=s', 'fq2=s', 'fqS=s', 'outdir=s', 'prefix=s',  'suffix=s', 'html', 'help', 'verbose') or pod2usage(2);
+GetOptions ($infoHR->{'optHR'}, 'fq1=s', 'fq2=s', 'fqS=s', 'outdir=s', 'prefix=s',  'suffix=s', 'qScale=s', 'html', 'help', 'verbose') or pod2usage(2);
 pod2usage(1) if $infoHR->{'optHR'}{'h'} or $infoHR->{'optHR'}{'help'};
 
 unless ( -f $infoHR->{'optHR'}{'fq1'} or -f $infoHR->{'optHR'}{'fq2'} or -f $infoHR->{'optHR'}{'fqS'} ) { pod2usage("Error: At lease one sequence data file must be submitted.") }
@@ -33,6 +33,8 @@ if ( -f $infoHR->{'optHR'}{'fqS'} ) { pod2usage("Error: Single end read processi
 
 unless ( -d $infoHR->{'optHR'}{'outdir'} ) { pod2usage("Error: An existing output directory must be provided.") }
 unless ( $infoHR->{'optHR'}{'prefix'} ) { pod2usage("Error: Please provide a prefix name.") }
+if ( defined($infoHR->{'optHR'}{'qScale'}) and ( $infoHR->{'optHR'}{'qScale'} != 33 and $infoHR->{'optHR'}{'qScale'} != 64 ) ) { pod2usage("Error: qScale must be 33 or 64.") }
+
 $infoHR->{'optHR'}{'suffix'} = "filter" unless $infoHR->{'optHR'}{'suffix'};
 
 ### ============= check options ===============###
@@ -51,6 +53,42 @@ my $maxNoQ20low = 10;
 
   processInParameters($infoHR);
   $infoHR->{'optHR'}{'outdir_results'} = createDirs("$infoHR->{'optHR'}{'outdir'}/results");
+
+# Test quality score scales
+  print STDERR "Checking quality value offset...\n";
+  {
+    my $no33 = 0; my $no64 = 0;
+
+    my @qValData = split(/\n/, `head -n 1000 $infoHR->{'optHR'}{'fq1'}`);
+    for ( my $x = 3; $x < 1000; $x += 4 ) {
+      foreach my $qVal ( split(//, $qValData[$x]) ) {
+        $no33++ if ord($qVal) < 63;
+        $no64++ if ord($qVal) > 74;
+      }
+    }
+
+    my @qValData = split(/\n/, `head -n 1000 $infoHR->{'optHR'}{'fq2'}`);
+    for ( my $x = 3; $x < 1000; $x += 4 ) {
+      foreach my $qVal ( split(//, $qValData[$x]) ) {
+        $no33++ if ord($qVal) < 63;
+        $no64++ if ord($qVal) > 74;
+      }
+    }
+
+    my $sum33_64 = $no33 + $no64;
+    my $pct33 = 100 * $no33 / $sum33_64;
+    my $pct64 = 100 * $no64 / $sum33_64;
+
+    if ( $pct33 > 99 ) {
+      $infoHR->{'optHR'}{'qScale'} = 33;
+      print STDERR "Using $infoHR->{'optHR'}{'qScale'} as offset ( $pct33 % of quality values unique to an offset of $infoHR->{'optHR'}{'qScale'} )\n";
+    } elsif ( $pct64 > 99 ) {
+      $infoHR->{'optHR'}{'qScale'} = 64;
+      print STDERR "Using $infoHR->{'optHR'}{'qScale'} as offset ( $pct64 % of quality values unique to an offset of $infoHR->{'optHR'}{'qScale'} )\n";
+    } else {
+      die "Cannot determine quality scale, percent quality values unique to an offset of 33: $pct33, and to 64: $no64\n\n";
+    }
+  }
 
   my $inFhHR = {}; my $outFhHR = {};
   {
@@ -313,21 +351,36 @@ sub analyseOneSequence {
   $infoHR->{'no_reads'}{'total'}++;
   $infoHR->{'no_bases'}{'total'} += length($readHR->{'seq'});
 
-  if ( $readHR->{'qual'} =~ /(B+)$/ ) { my $noBs = length($1); $readHR->{'seq'} = substr($readHR->{'seq'}, 0, -1 * $noBs); $readHR->{'qual'} = substr($readHR->{'qual'}, 0, -1 * $noBs); }
-  $readHR->{'len'} = length($readHR->{'seq'});
-  $infoHR->{'no_reads'}{'too_short_trm_rd'}++, return undef() unless $readHR->{'len'} >= $minTrmRdLen;
+  if ( $infoHR->{'optHR'}{'qScale'} == 64 ) {
+    if ( $readHR->{'qual'} =~ /(B+)$/ ) { my $noBs = length($1); $readHR->{'seq'} = substr($readHR->{'seq'}, 0, -1 * $noBs); $readHR->{'qual'} = substr($readHR->{'qual'}, 0, -1 * $noBs); }
+    $readHR->{'len'} = length($readHR->{'seq'});
+    $infoHR->{'no_reads'}{'too_short_trm_rd'}++, return undef() unless $readHR->{'len'} >= $minTrmRdLen;
 
-  my $noN = $readHR->{'seq'} =~ tr/nN//; my $noQ10low = $readHR->{'qual'} =~ tr/\@A-I//; my $noQ20low = $readHR->{'qual'} =~ tr/\@A-S//;
-  $infoHR->{'no_reads'}{'too_many_N'}++, return undef() if $noN > $maxNoN;
-  $infoHR->{'no_reads'}{'too_many_under10'}++, return undef() if $noQ10low > $maxNoQ10low;
-  $infoHR->{'no_reads'}{'too_many_under20'}++, return undef() if $noQ20low > $maxNoQ20low;
+    my $noN = $readHR->{'seq'} =~ tr/nN//; my $noQ10low = $readHR->{'qual'} =~ tr/\@A-I//; my $noQ20low = $readHR->{'qual'} =~ tr/\@A-S//;
+
+    $infoHR->{'no_reads'}{'too_many_N'}++, return undef() if $noN > $maxNoN;
+    $infoHR->{'no_reads'}{'too_many_under10'}++, return undef() if $noQ10low > $maxNoQ10low;
+    $infoHR->{'no_reads'}{'too_many_under20'}++, return undef() if $noQ20low > $maxNoQ20low;
+
+  } elsif ( $infoHR->{'optHR'}{'qScale'} == 33 ) {
+    if ( $readHR->{'qual'} =~ /(\x23+)$/ ) { my $noBs = length($1); $readHR->{'seq'} = substr($readHR->{'seq'}, 0, -1 * $noBs); $readHR->{'qual'} = substr($readHR->{'qual'}, 0, -1 * $noBs); }
+    $readHR->{'len'} = length($readHR->{'seq'});
+    $infoHR->{'no_reads'}{'too_short_trm_rd'}++, return undef() unless $readHR->{'len'} >= $minTrmRdLen;
+
+    my $noN = $readHR->{'seq'} =~ tr/nN//; my $noQ10low = $readHR->{'qual'} =~ tr/\x21-\x2A//; my $noQ20low = $readHR->{'qual'} =~ tr/\x21-\x34//;
+
+    $infoHR->{'no_reads'}{'too_many_N'}++, return undef() if $noN > $maxNoN;
+    $infoHR->{'no_reads'}{'too_many_under10'}++, return undef() if $noQ10low > $maxNoQ10low;
+    $infoHR->{'no_reads'}{'too_many_under20'}++, return undef() if $noQ20low > $maxNoQ20low;
+
+  }
 
   warn "\nNumber of bases ($readHR->{'len'}) != number of quality values (" . length($readHR->{'qual'}) . ") for $readHR->{'name'}" unless $readHR->{'len'} == length($readHR->{'qual'});
   $infoHR->{'length_histogram'}[$readHR->{'len'}]++;
   $infoHR->{'gc_pct_histogram'}{round(100 * ( $readHR->{'seq'} =~ tr/[GCgc]// ) / $readHR->{'len'}, 1)}++;
 
   while ( $readHR->{'seq'} =~ /[Nn]/g ) { $infoHR->{'no_N_positionbased'}[pos($readHR->{'seq'})]++; }
-  while ( $readHR->{'qual'} =~ /(.)/g ) { $infoHR->{'total_base_quality_positionbased'}[pos($readHR->{'qual'})] += ord($1) - 64; $infoHR->{'total_bases_positionbased'}[pos($readHR->{'qual'})]++; }
+  while ( $readHR->{'qual'} =~ /(.)/g ) { $infoHR->{'total_base_quality_positionbased'}[pos($readHR->{'qual'})] += ord($1) - $infoHR->{'optHR'}{'qScale'}; $infoHR->{'total_bases_positionbased'}[pos($readHR->{'qual'})]++; }
 
   $readHR->{'pass'} = 1;
   return 1;
@@ -505,6 +558,7 @@ filter_fastq.pl [options]
    --fq1             PE fastq file, direction 1
    --fq2             PE fastq file, direction 2
    --fqS             SE fastq file
+   --qScale          Quality scale offset, must be 33 or 64. Will be determined unless set.
 
 Output files will be named: prefix.dir.suffix.fastq. At least one fastq file is required. If paired end (PE) data is used, both fq1 and fq2 are required and must match internally.
 

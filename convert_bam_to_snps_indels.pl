@@ -206,6 +206,7 @@ sub parse_pileup_SNP_line {
 
       $infoHR->{'stats'}{'noTsTv'}{'transition'}++   if ($fNt eq "A" and $tNtb eq "G") or ($fNt eq "G" and $tNtb eq "A") or ($fNt eq "C" and $tNtb eq "T") or ($fNt eq "T" and $tNtb eq "C");
       $infoHR->{'stats'}{'noTsTv'}{'transversion'}++ if ($fNt eq "A" and $tNtb eq "C") or ($fNt eq "C" and $tNtb eq "A") or ($fNt eq "G" and $tNtb eq "T") or ($fNt eq "T" and $tNtb eq "G") or
+                                                        ($fNt eq "A" and $tNtb eq "T") or ($fNt eq "T" and $tNtb eq "A") or ($fNt eq "G" and $tNtb eq "C") or ($fNt eq "C" and $tNtb eq "G");
 
       $annovarString .= sprintf ("%s\t%d\t%d\t%s\t%s\tid:%s;type:%s;covr:%d;cnts:(%s);snpQ:%d;conQ:%d;mapQ:%d;%s\n", $colsAR->[0], $colsAR->[1], $colsAR->[1], $fNt, $tNtb,
                                 ("$colsAR->[0]:$colsAR->[1]-$colsAR->[1]" . "_$tNtb"), "snv", $colsAR->[7], $cntStr, $colsAR->[4], $colsAR->[5], $colsAR->[6], $tNt =~ /[ACGT]/ ? "hom" : "het");

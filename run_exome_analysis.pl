@@ -22,7 +22,7 @@ $infoHR->{'optHR'}    = {};
 
 
 # Read input and setup global variables
-GetOptions ($infoHR->{'optHR'}, 'fq1=s', 'fq2=s', 'fqS=s', 'regions=s', 'outdir=s', 'sample=s', 'run=s', 'shm', 'help', 'verbose') or pod2usage(2);
+GetOptions ($infoHR->{'optHR'}, 'fq1=s', 'fq2=s', 'fqS=s', 'regions=s', 'outdir=s', 'sample=s', 'run=s', 'submit', 'shm', 'help', 'verbose') or pod2usage(2);
 pod2usage(1) if $infoHR->{'optHR'}{'h'} or $infoHR->{'optHR'}{'help'};
 
 #print Dumper($infoHR);
@@ -68,7 +68,7 @@ sub checkSamTools {
     $score++ if /\-A\s+use the MAQ model for SNP calling/;
     $score++ if /\-c\s+output the SOAPsnp consensus sequence/;
   }
-  die "Seems to be a problem with samtools. I need the pileup function and I am looking for the consensus and MAQ model options\n\n" unless $score == 2;
+  pod2usage("Seems to be a problem with samtools. I need the pileup function and I am looking for the consensus and MAQ model options\n\n") unless $score == 2;
 }
 
 
@@ -83,8 +83,8 @@ sub checkInParameters {
   unless ( -f $infoHR->{'optHR'}{'regions'} ) { pod2usage("Error: Please provide a regions file for coverage calculations.") }
 
   unless ( -d $infoHR->{'optHR'}{'outdir'} ) { pod2usage("Error: An existing output directory must be provided.") }
-  unless ( $infoHR->{'optHR'}{'sample'} ) { pod2usage("Error: Please provide a sample name for the output name (output filenames will be based on the prefix).") }
-  unless ( $infoHR->{'optHR'}{'run'} ) { pod2usage("Error: Please provide a run name for the output name (output filenames will be based on the prefix).") }
+  unless ( $infoHR->{'optHR'}{'sample'} =~ /^[\w\-]+$/ ) { pod2usage("Error: Please provide a sample name for the output name (output filenames will be based on the prefix). Run names can only contain word characters and dashes ([a-zA_Z0-9_-]).") }
+  unless ( $infoHR->{'optHR'}{'run'} =~ /^[\w\-]+$/ ) { pod2usage("Error: Please provide a run name for the output name (output filenames will be based on the prefix). Run names can only contain word characters and dashes ([a-zA_Z0-9_-]).") }
 
   processInParameters($infoHR);
 }
@@ -92,7 +92,7 @@ sub checkInParameters {
 sub processInParameters {
   my $infoHR  = shift;
 
-  $infoHR->{'optHR'}{'prefix'} = "$infoHR->{'optHR'}{'sample'}.$infoHR->{'optHR'}{'run'}";
+  $infoHR->{'optHR'}{'prefix'} = $infoHR->{'optHR'}{'sample'} . "." . $infoHR->{'optHR'}{'run'} . "." . (( -f $infoHR->{'optHR'}{'fq1'} and -f $infoHR->{'optHR'}{'fq2'} ) ? "PE" : "SE");
   my @okSuffix = qw(fastq fq); my $matchStr = join("|", @okSuffix);
   for my $p ( 'fq1', 'fq2', 'fqS', 'outdir' ) {
     next unless -e $infoHR->{'optHR'}{$p};
@@ -123,6 +123,7 @@ sub setupDirStructure {
   $infoHR->{'analysis_dirs'}{'GATK-intm'}          = createDirs("$infoHR->{'optHR'}{'outdir'}/GATK/intermediary");
   $infoHR->{'analysis_dirs'}{'mosaik-mosaikDS_PE'} = createDirs("$infoHR->{'optHR'}{'outdir'}/mosaik/MosaikDupSnoop_PE");
   $infoHR->{'analysis_dirs'}{'mosaik-mosaikDS_SE'} = createDirs("$infoHR->{'optHR'}{'outdir'}/mosaik/MosaikDupSnoop_SE");
+  $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}   = createDirs("$infoHR->{'optHR'}{'outdir'}/mosaik/IndRunBam");
 #print Dumper($infoHR->{'analysis_dirs'});
 }
 
@@ -146,8 +147,8 @@ sub writeCurrent {
 sub writeSbatchScripts {
   my $infoHR  = shift;
 
-  $infoHR->{'optHR'}{'sbatch-cur-SE'} = "$infoHR->{'analysis_dirs'}{'sbatch-cur'}/$infoHR->{'optHR'}{'prefix'}.SE.running";
-  $infoHR->{'optHR'}{'sbatch-cur-PE'} = "$infoHR->{'analysis_dirs'}{'sbatch-cur'}/$infoHR->{'optHR'}{'prefix'}.PE.running";
+  $infoHR->{'optHR'}{'sbatch-cur-SE'} = "$infoHR->{'analysis_dirs'}{'sbatch-cur'}/$infoHR->{'optHR'}{'prefix'}.orphan.running";
+  $infoHR->{'optHR'}{'sbatch-cur-PE'} = "$infoHR->{'analysis_dirs'}{'sbatch-cur'}/$infoHR->{'optHR'}{'prefix'}.paired.running";
 
   {
     if ( -f $infoHR->{'optHR'}{'fq1'} and -f $infoHR->{'optHR'}{'fq2'} ) {
@@ -162,7 +163,7 @@ sub writeSbatchScripts {
         my $cIdx = 0;
         my $cmdAR = [];
 
-        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "thin", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME'}"});
+        my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME'}"});
         returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'FastQC', 'Mosaik');
 
         push(@{$cmdAR},
@@ -172,7 +173,7 @@ sub writeSbatchScripts {
           {'cmd' => "fastqc -o $infoHR->{'analysis_dirs'}{'fastq-results'}/ $infoHR->{'optHR'}{'fq2'}", 'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'fastq-info'}/$infoHR->{'optHR'}{'fq2b'}.fastQC", 'cont' => 1, 'xn' => 2},
 
           {'cmd' => "# Filter reads"},
-          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'filter_fastq'} --outdir $infoHR->{'analysis_dirs'}{'fastq_filter'}/ --prefix $infoHR->{'optHR'}{'prefix'} --suffix filter --fq1 $infoHR->{'optHR'}{'fq1'} --fq2 $infoHR->{'optHR'}{'fq2'} -html",
+          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'filter_fastq'} --outdir $infoHR->{'analysis_dirs'}{'fastq_filter'}/ --prefix $infoHR->{'optHR'}{'prefix'} --suffix filter --html --fq1 $infoHR->{'optHR'}{'fq1'} --fq2 $infoHR->{'optHR'}{'fq2'} ",
            'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'fastq_filter-info'}/$infoHR->{'optHR'}{'prefix'}.filter_fastq", 'cont' => 0, 'xn' => 2},
 
           {'cmd' => "# Submit next sbatch script(s)"},
@@ -185,14 +186,16 @@ sub writeSbatchScripts {
         $cpHR->{'resPfx'} = "$infoHR->{'analysis_dirs'}{'fastq_filter-results'}/$infoHR->{'optHR'}{'prefix'}";
         push(@{$cmdAR},
           {'cmd' => "# FastQC after filter"},
-          {'cmd' => "fastqc -o $infoHR->{'analysis_dirs'}{'fastq_filter-results'}/ $cpHR->{'inpPfx'}.1.filter.fastq", 'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.PE.1.filter_fastq_fastQC", 'cont' => 1, 'xn' => 2},
-          {'cmd' => "fastqc -o $infoHR->{'analysis_dirs'}{'fastq_filter-results'}/ $cpHR->{'inpPfx'}.2.filter.fastq", 'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.PE.2.filter_fastq_fastQC", 'cont' => 1, 'xn' => 2},
-          {'cmd' => "fastqc -o $infoHR->{'analysis_dirs'}{'fastq_filter-results'}/ $cpHR->{'inpPfx'}.S.filter.fastq", 'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.SE.S.filter_fastq_fastQC", 'cont' => 1, 'xn' => 2},
+          {'cmd' => "fastqc -o $infoHR->{'analysis_dirs'}{'fastq_filter-results'}/ $cpHR->{'inpPfx'}.1.filter.fastq", 'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.1.filter_fastq_fastQC", 'cont' => 1, 'xn' => 2},
+          {'cmd' => "fastqc -o $infoHR->{'analysis_dirs'}{'fastq_filter-results'}/ $cpHR->{'inpPfx'}.2.filter.fastq", 'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.2.filter_fastq_fastQC", 'cont' => 1, 'xn' => 2},
+          {'cmd' => "fastqc -o $infoHR->{'analysis_dirs'}{'fastq_filter-results'}/ $cpHR->{'inpPfx'}.S.filter.fastq", 'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.S.filter_fastq_fastQC", 'cont' => 1, 'xn' => 2},
         );
 
         my $sbatchFH = myOpenRW("$infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx]");
         print $sbatchFH returnSbatchScript($infoHR, $paramAR, $cmdAR);
         close($sbatchFH);
+        print "Command to submit script:\nsbatch $infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx]\n\n";
+        $infoHR->{'optHR'}{'submitCmd'} = "sbatch $infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx]" if $infoHR->{'optHR'}{'submit'};
       }
 
 
@@ -202,7 +205,7 @@ sub writeSbatchScripts {
         my $cmdAR = [];
 
         my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME_MOSAIK'}"});
-        returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'Mosaik');
+        returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'Mosaik', 'Samtools');
 
         $cpHR->{'inpPfx'} = "$infoHR->{'analysis_dirs'}{'fastq_filter'}/$infoHR->{'optHR'}{'prefix'}";
         $cpHR->{'outPfx'} = "$infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'prefix'}";
@@ -226,7 +229,7 @@ sub writeSbatchScripts {
           {'cmd' => "# MosaikBuild"},
           {'cmd' => "MosaikBuild $infoHR->{'configHR'}{'PAR'}{'MosaikBuild_PE'} -q $cpHR->{'inpPfx'}.1.filter.fastq -q2 $cpHR->{'inpPfx'}.2.filter.fastq -out $cpHR->{'nMosPfx'}.PE.dat",
            'echo' => 1, 'cmdFN' => "$cpHR->{'nInfPfx'}.PE.MosaikBuild", 'cont' => 0, 'xn' => 2},
-          {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
+          {'cmd' => "rsync -a $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
         $cpHR->{'inpPfx'} = "$infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'prefix'}";
@@ -235,7 +238,7 @@ sub writeSbatchScripts {
           {'cmd' => "MosaikAligner $infoHR->{'configHR'}{'PAR'}{'MosaikAligner_PE'} -in $cpHR->{'nMosPfx'}.PE.dat -out $cpHR->{'nMosPfx'}.PE.aln.dat -rur $cpHR->{'nMosPfx'}.PE.unAln.fastq " .
            "-ia $infoHR->{'configHR'}{'PATH'}{'REFERENCE_MOSAIK'} -j $infoHR->{'configHR'}{'PATH'}{'REFERENCE_MOSAIK_JMP'}",
            'echo' => 1, 'cmdFN' => "$cpHR->{'nInfPfx'}.PE.MosaikAligner", 'cont' => 0, 'xn' => 2},
-          {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
+          {'cmd' => "rsync -a $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
         push(@{$cmdAR},
@@ -243,29 +246,53 @@ sub writeSbatchScripts {
           {'cmd' => "MosaikDupSnoop $infoHR->{'configHR'}{'PAR'}{'MosaikDupSnoop_PE'} -in $cpHR->{'nMosPfx'}.PE.aln.dat -od $shmMDS",
            'echo' => 1, 'cmdFN' => "$cpHR->{'nInfPfx'}.PE.MosaikDupSnoop", 'cont' => 0, 'xn' => 1},
 #          {'cmd' => "cp -f $shmMDS.db $infoHR->{'analysis_dirs'}{'mosaik-mosaikDS_PE'}/", 'xn' => 2},
-          {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
+          {'cmd' => "rsync -a $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
         push(@{$cmdAR},
           {'cmd' => "# MosaikSort"},
           {'cmd' => "MosaikSort $infoHR->{'configHR'}{'PAR'}{'MosaikSort_PE'} -in $cpHR->{'nMosPfx'}.PE.aln.dat -out $cpHR->{'nMosPfx'}.PE.aln.mSrt.dat -dup $shmMDS",
            'echo' => 1, 'cmdFN' => "$cpHR->{'nInfPfx'}.PE.MosaikSort", 'cont' => 0, 'xn' => 2},
-          {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
+          {'cmd' => "rm -f $infoHR->{'optHR'}{'sbatch-cur-PE'}"},
+          {'cmd' => "rsync -a $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
+
+
+        push(@{$cmdAR},
+          {'cmd' => "# MosaikMerge & MosaikText - Individual runs"},
+#          {'cmd' => "rm -f $infoHR->{'optHR'}{'sbatch-cur-PE'}"},
+          {'cmd' => "if [ ! \"\$(ls -A $infoHR->{'analysis_dirs'}{'sbatch-cur'} | grep '$infoHR->{'optHR'}{'prefix'}.')\" ]; then"}, # Alternative: [ "$(ls -l 12-10F/mosaik/*.aln.mSrt.dat|wc -l)" == 2 ] && echo "2 files" || echo "not 2 files"
+
+          {'cmd' => "MosaikMerge $infoHR->{'configHR'}{'PAR'}{'MosaikMerge'} \$(find $infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'prefix'}.*.aln.mSrt.dat|perl -nle 'printf(\"-in %s \", \$_)') -out $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}/$infoHR->{'optHR'}{'prefix'}.merged.dat",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.merged.MosaikMerge", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+
+          {'cmd' => "MosaikText -in $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}/$infoHR->{'optHR'}{'prefix'}.merged.dat -bam $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}/$infoHR->{'optHR'}{'prefix'}.merged.bam",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.merged.MosaikText", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+
+          {'cmd' => "# Coverage calculations", 'xi' => 2},
+          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'calculate_coverage_statistics'} --ref $infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'} --bed $infoHR->{'optHR'}{'regions'} --bam $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}/$infoHR->{'optHR'}{'prefix'}.merged.bam " .
+                    "--outdir $infoHR->{'analysis_dirs'}{'coverage-results'}/ --outPrefix $infoHR->{'optHR'}{'prefix'}.merged --html",
+           'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'coverage-info'}/$infoHR->{'optHR'}{'prefix'}.merged.coverage", 'cont' => 1, 'xi' => 2, 'xn' => 2},
+
+          {'cmd' => "fi", 'xn' => 2},
+        );
+
 
         push(@{$cmdAR},
           {'cmd' => "# MosaikMerge & MosaikText"},
-          {'cmd' => "rm -f $infoHR->{'optHR'}{'sbatch-cur-PE'}"},
+#          {'cmd' => "rm -f $infoHR->{'optHR'}{'sbatch-cur-PE'}"},
           {'cmd' => "if [ ! \"\$(ls -A $infoHR->{'analysis_dirs'}{'sbatch-cur'})\" ]; then"}, # Alternative: [ "$(ls -l 12-10F/mosaik/*.aln.mSrt.dat|wc -l)" == 2 ] && echo "2 files" || echo "not 2 files"
+
           {'cmd' => "MosaikMerge $infoHR->{'configHR'}{'PAR'}{'MosaikMerge'} \$(find $infoHR->{'analysis_dirs'}{'mosaik'}/*.aln.mSrt.dat|perl -nle 'printf(\"-in %s \", \$_)') -out $infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'sample'}.merged.dat",
-           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.PE.MosaikMerge", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+           'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'mosaik-info'}/$infoHR->{'optHR'}{'sample'}.merged.MosaikMerge", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+
           {'cmd' => "MosaikText -in $infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'sample'}.merged.dat -bam $infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'sample'}.merged.bam",
-           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.PE.MosaikText", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+           'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'mosaik-info'}/$infoHR->{'optHR'}{'sample'}.merged.MosaikText", 'cont' => 0, 'xi' => 2, 'xn' => 2},
 
           {'cmd' => "# Submit next sbatch script(s)", 'xi' => 2},
           {'cmd' => "sbatch $infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx + 2]", 'xi' => 2, 'xn' => 2},
 
-          {'cmd' => "fi"},
+          {'cmd' => "fi", 'xn' => 2},
           {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
@@ -281,7 +308,7 @@ sub writeSbatchScripts {
         my $cmdAR = [];
 
         my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME_MOSAIK'}"});
-        returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'Mosaik');
+        returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'Mosaik', 'Samtools');
 
         $cpHR->{'inpPfx'} = "$infoHR->{'analysis_dirs'}{'fastq_filter'}/$infoHR->{'optHR'}{'prefix'}";
         $cpHR->{'outPfx'} = "$infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'prefix'}";
@@ -305,7 +332,7 @@ sub writeSbatchScripts {
           {'cmd' => "# MosaikBuild"},
           {'cmd' => "MosaikBuild $infoHR->{'configHR'}{'PAR'}{'MosaikBuild_SE'} -q $cpHR->{'inpPfx'}.S.filter.fastq -out $cpHR->{'nMosPfx'}.SE.dat",
            'echo' => 1, 'cmdFN' => "$cpHR->{'nInfPfx'}.SE.MosaikBuild", 'cont' => 0, 'xn' => 2},
-          {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
+          {'cmd' => "rsync -a $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
         $cpHR->{'inpPfx'} = "$infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'prefix'}";
@@ -314,7 +341,7 @@ sub writeSbatchScripts {
           {'cmd' => "MosaikAligner $infoHR->{'configHR'}{'PAR'}{'MosaikAligner_SE'} -in $cpHR->{'nMosPfx'}.SE.dat -out $cpHR->{'nMosPfx'}.SE.aln.dat -rur $cpHR->{'nMosPfx'}.SE.unAln.fastq " .
            "-ia $infoHR->{'configHR'}{'PATH'}{'REFERENCE_MOSAIK'} -j $infoHR->{'configHR'}{'PATH'}{'REFERENCE_MOSAIK_JMP'}",
            'echo' => 1, 'cmdFN' => "$cpHR->{'nInfPfx'}.SE.MosaikAligner", 'cont' => 0, 'xn' => 2},
-          {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
+          {'cmd' => "rsync -a $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
         push(@{$cmdAR},
@@ -322,29 +349,52 @@ sub writeSbatchScripts {
           {'cmd' => "MosaikDupSnoop $infoHR->{'configHR'}{'PAR'}{'MosaikDupSnoop_SE'} -in $cpHR->{'nMosPfx'}.SE.aln.dat -od $shmMDS",
            'echo' => 1, 'cmdFN' => "$cpHR->{'nInfPfx'}.SE.MosaikDupSnoop", 'cont' => 0, 'xn' => 1},
           {'cmd' => "cp -f $shmMDS.db $infoHR->{'analysis_dirs'}{'mosaik-mosaikDS_SE'}/", 'xn' => 2},
-          {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
+          {'cmd' => "rsync -a $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
         push(@{$cmdAR},
           {'cmd' => "# MosaikSort"},
           {'cmd' => "MosaikSort $infoHR->{'configHR'}{'PAR'}{'MosaikSort_SE'} -in $cpHR->{'nMosPfx'}.SE.aln.dat -out $cpHR->{'nMosPfx'}.SE.aln.mSrt.dat -dup $shmMDS",
            'echo' => 1, 'cmdFN' => "$cpHR->{'nInfPfx'}.SE.MosaikSort", 'cont' => 0, 'xn' => 2},
-          {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
+          {'cmd' => "rm -f $infoHR->{'optHR'}{'sbatch-cur-SE'}"},
+          {'cmd' => "rsync -a $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
         push(@{$cmdAR},
+          {'cmd' => "# MosaikMerge & MosaikText - Individual runs"},
+#          {'cmd' => "rm -f $infoHR->{'optHR'}{'sbatch-cur-SE'}"},
+          {'cmd' => "if [ ! \"\$(ls -A $infoHR->{'analysis_dirs'}{'sbatch-cur'}/$infoHR->{'optHR'}{'prefix'}.*)\" ]; then"}, # Alternative: [ "$(ls -l 12-10F/mosaik/*.aln.mSrt.dat|wc -l)" == 2 ] && echo "2 files" || echo "not 2 files"
+
+          {'cmd' => "MosaikMerge $infoHR->{'configHR'}{'PAR'}{'MosaikMerge'} \$(find $infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'prefix'}.*.aln.mSrt.dat|perl -nle 'printf(\"-in %s \", \$_)') -out $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}/$infoHR->{'optHR'}{'prefix'}.merged.dat",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.merged.MosaikMerge", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+
+          {'cmd' => "MosaikText -in $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}/$infoHR->{'optHR'}{'prefix'}.merged.dat -bam $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}/$infoHR->{'optHR'}{'prefix'}.merged.bam",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.merged.MosaikText", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+
+          {'cmd' => "# Coverage calculations", 'xi' => 2},
+          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'calculate_coverage_statistics'} --ref $infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'} --bed $infoHR->{'optHR'}{'regions'} --bam $infoHR->{'analysis_dirs'}{'mosaik-indRunBam'}/$infoHR->{'optHR'}{'prefix'}.merged.bam " .
+                    "--outdir $infoHR->{'analysis_dirs'}{'coverage-results'}/ --outPrefix $infoHR->{'optHR'}{'prefix'}.merged --html",
+           'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'coverage-info'}/$infoHR->{'optHR'}{'prefix'}.merged.coverage", 'cont' => 1, 'xi' => 2, 'xn' => 2},
+
+          {'cmd' => "fi", 'xn' => 2},
+        );
+
+
+        push(@{$cmdAR},
           {'cmd' => "# MosaikMerge & MosaikText"},
-          {'cmd' => "rm -f $infoHR->{'optHR'}{'sbatch-cur-SE'}"},
+#          {'cmd' => "rm -f $infoHR->{'optHR'}{'sbatch-cur-SE'}"},
           {'cmd' => "if [ ! \"\$(ls -A $infoHR->{'analysis_dirs'}{'sbatch-cur'})\" ]; then"},
+
           {'cmd' => "MosaikMerge $infoHR->{'configHR'}{'PAR'}{'MosaikMerge'} \$(find $infoHR->{'analysis_dirs'}{'mosaik'}/*.aln.mSrt.dat|perl -nle 'printf(\"-in %s \", \$_)') -out $infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'sample'}.merged.dat",
-           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.SE.MosaikMerge", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+           'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'mosaik-info'}/$infoHR->{'optHR'}{'sample'}.merged.MosaikMerge", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+
           {'cmd' => "MosaikText -in $infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'sample'}.merged.dat -bam $infoHR->{'analysis_dirs'}{'mosaik'}/$infoHR->{'optHR'}{'sample'}.merged.bam",
-           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.PE.MosaikText", 'cont' => 0, 'xi' => 2, 'xn' => 2},
+           'echo' => 1, 'cmdFN' => "$infoHR->{'analysis_dirs'}{'mosaik-info'}/$infoHR->{'optHR'}{'sample'}.merged.MosaikText", 'cont' => 0, 'xi' => 2, 'xn' => 2},
 
           {'cmd' => "# Submit next sbatch script(s)", 'xi' => 2},
           {'cmd' => "sbatch $infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx + 1]", 'xi' => 2, 'xn' => 2},
 
-          {'cmd' => "fi"},
+          {'cmd' => "fi", 'xn' => 2},
           {'cmd' => "rsync -ca $infoHR->{'configHR'}{'PATH'}{'MOSAIK_NODE'} $infoHR->{'analysis_dirs'}{'mosaik'}/", 'xn' => 2},
         );
 
@@ -385,7 +435,7 @@ sub writeSbatchScripts {
           {'cmd' => "# GATK recalibration step 2"},
           {'cmd' => "java -Xmx$infoHR->{'configHR'}{'PAR'}{'GATK_mem'} -jar $infoHR->{'configHR'}{'PATH'}{'GATK_jar'} $infoHR->{'configHR'}{'PAR'}{'GATK_recal2'} -R $infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'} -I $cpHR->{'inpPfx'}.merged.bam ".
            "-o $cpHR->{'outPfx'}.merged.recal.bam -recalFile $cpHR->{'intPfx'}.recal.data.csv",
-           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.merged.GATK_recal_1", 'cont' => 0, 'xn' => 2},
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.merged.GATK_recal_2", 'cont' => 0, 'xn' => 2},
         );
 
         $cpHR->{'inpPfx'} = "$infoHR->{'analysis_dirs'}{'GATK'}/$infoHR->{'optHR'}{'sample'}";
@@ -430,45 +480,82 @@ sub writeSbatchScripts {
       }
 
 
-      { # Coverage calculations and variant calling
+      { # Coverage calculations, variant calling and variant annotation
         my $cpHR = {};
         my $cIdx = 4;
         my $cmdAR = [];
 
         my $paramAR = returnParamAR($infoHR, {'scriptNamePgm' => $scriptPgmNameAR->[$cIdx], 'C' => "fat", 't' => "$infoHR->{'configHR'}{'VAR'}{'RUNTIME'}"});
-        returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'GATK', 'Samtools'); # Samtools_0_1_12
+        returnInitAndModuleLoad($infoHR, $cmdAR, 'Bioinfo-tools', 'GATK', 'Samtools', 'Annovar'); # Samtools_0_1_12
 
 
         $cpHR->{'inpFil'} = "$infoHR->{'analysis_dirs'}{'GATK'}/$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt.bam";
         $cpHR->{'outDir'} = "$infoHR->{'analysis_dirs'}{'coverage-results'}/";
         $cpHR->{'outPfx'} = "$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt";
 
-        $cpHR->{'infPfx'} = "$infoHR->{'analysis_dirs'}{'coverage-info'}/$infoHR->{'optHR'}{'sample'}";
-        $cpHR->{'resPfx'} = "$infoHR->{'analysis_dirs'}{'coverage-results'}/$infoHR->{'optHR'}{'sample'}";
+        $cpHR->{'infPfx'} = "$infoHR->{'analysis_dirs'}{'coverage-info'}/$cpHR->{'outPfx'}.coverage";
+        $cpHR->{'resPfx'} = "$infoHR->{'analysis_dirs'}{'coverage-results'}/$cpHR->{'outPfx'}.coverage";
 
         push(@{$cmdAR},
-# ~/script/resequencing_pipeline/calculate_coverage_statistics.pl --ref ~/hg/GRCh37_hg19/GRCh37_hg19_allChr_nl.fa --bed ~/he/Nimblegen_exome/johan_nimblegen_exome_bed/tiled_HG19.bed --bam 12-10F/GATK/12-10F.merged.recal.realn.reSrt.bam --outdir 12-10F/coverage/
           {'cmd' => "# Coverage calculations"},
           {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'calculate_coverage_statistics'} --ref $infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'} --bed $infoHR->{'optHR'}{'regions'} --bam $cpHR->{'inpFil'} " .
-                    "--outdir $cpHR->{'outDir'} --outPrefix $cpHR->{'outPfx'}",
+                    "--outdir $cpHR->{'outDir'} --outPrefix $cpHR->{'outPfx'} --html",
            'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.coverage", 'cont' => 1, 'xn' => 2},
-        );
 
+          {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'calculate_coverage_statistics'} --ref $infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'} --bed $infoHR->{'configHR'}{'PATH'}{'CCDS_REGIONS'} --bam $cpHR->{'inpFil'} " .
+                    "--outdir $cpHR->{'outDir'} --outPrefix $cpHR->{'outPfx'}.ccds_regions --html --outHqCoverage $infoHR->{'analysis_dirs'}{'coverage'}/$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt.HQ_coverage.bedGraph",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.ccds_regions", 'cont' => 1, 'xn' => 2},
+        );
 
         $cpHR->{'outDir'} = "$infoHR->{'analysis_dirs'}{'variants'}/";
         $cpHR->{'outPfx'} = "$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt";
 
-        $cpHR->{'infPfx'} = "$infoHR->{'analysis_dirs'}{'variants-info'}/$infoHR->{'optHR'}{'sample'}";
-        $cpHR->{'resPfx'} = "$infoHR->{'analysis_dirs'}{'variants-results'}/$infoHR->{'optHR'}{'sample'}";
+        $cpHR->{'infPfx'} = "$infoHR->{'analysis_dirs'}{'variants-info'}/$cpHR->{'outPfx'}";
+        $cpHR->{'resPfx'} = "$infoHR->{'analysis_dirs'}{'variants-results'}/$cpHR->{'outPfx'}";
 
         push(@{$cmdAR},
-#  ~/script/resequencing_pipeline/convert_bam_to_snps_indels.pl --ref ~/hg/GRCh37_hg19/GRCh37_hg19_allChr_nl.fa --bam 12-10F/GATK/12-10F.merged.recal.realn.reSrt.bam --outdir 12-10F/variants/
           {'cmd' => "# Variant calling MB script"},
           {'cmd' => "$infoHR->{'configHR'}{'BIN'}{'convert_bam_to_snps_indels'} --ref $infoHR->{'configHR'}{'PATH'}{'REFERENCE_GENOME'} --bam $cpHR->{'inpFil'} --outdir $cpHR->{'outDir'} --outPrefix $cpHR->{'outPfx'}",
-           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.MBvariants", 'cont' => 1, 'xn' => 2},
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.MBvariants", 'cont' => 0, 'xn' => 2},
         );
 
+        $cpHR->{'inpFil'} = "$cpHR->{'outDir'}/$cpHR->{'outPfx'}.variants.annovar";
+        $cpHR->{'outDir'} = "$infoHR->{'analysis_dirs'}{'annotation'}";
+        $cpHR->{'outPfx'} .= ".variants.annovar";
 
+        $cpHR->{'infPfx'} = "$infoHR->{'analysis_dirs'}{'annotation-info'}/$cpHR->{'outPfx'}";
+
+        push(@{$cmdAR},
+          {'cmd' => "# Annotation by Annovar"},
+          {'cmd' => "annotate_variation.pl --geneanno --buildver hg19 -dbtype gene --outfile $cpHR->{'outDir'}/$cpHR->{'outPfx'} $cpHR->{'inpFil'} $infoHR->{'configHR'}{'PATH'}{'Annovar_DBdir'}",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.annovar.geneAnnot", 'cont' => 1, 'xn' => 2},
+
+          {'cmd' => "annotate_variation.pl --filter --buildver hg19 -dbtype snp131 --outfile $cpHR->{'outDir'}/$cpHR->{'outPfx'} $cpHR->{'inpFil'} $infoHR->{'configHR'}{'PATH'}{'Annovar_DBdir'}",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.annovar.snp131", 'cont' => 1, 'xn' => 2},
+
+          {'cmd' => "annotate_variation.pl --filter --buildver hg19 -dbtype 1000g2010nov_all --outfile $cpHR->{'outDir'}/$cpHR->{'outPfx'} $cpHR->{'inpFil'} $infoHR->{'configHR'}{'PATH'}{'Annovar_DBdir'}",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.annovar.1000g", 'cont' => 1, 'xn' => 2},
+
+          {'cmd' => "annotate_variation.pl --filter --buildver hg19 -dbtype ljb_pp2 --reverse --outfile $cpHR->{'outDir'}/$cpHR->{'outPfx'} $cpHR->{'inpFil'} $infoHR->{'configHR'}{'PATH'}{'Annovar_DBdir'}",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.annovar.pph2", 'cont' => 1, 'xn' => 2},
+
+          {'cmd' => "annotate_variation.pl --filter --buildver hg19 -dbtype avsift --outfile $cpHR->{'outDir'}/$cpHR->{'outPfx'} $cpHR->{'inpFil'} $infoHR->{'configHR'}{'PATH'}{'Annovar_DBdir'}",
+           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.annovar.avsift", 'cont' => 1, 'xn' => 2},
+
+        );
+
+# ANNOVAR
+# annotate_variation.pl --geneanno --buildver hg19 -dbtype gene --outfile 143-10F/annotation/143-10F.merged.recal.realn.reSrt.variants.annovar 143-10F/variants/143-10F.merged.recal.realn.reSrt.variants.annovar /bubo/nobackup/uppnex/annotations/annovar/humandb/
+# annotate_variation.pl --filter --dbtype snp131 --buildver hg19 --outfile 143-10F/annotation/143-10F.merged.recal.realn.reSrt.variants.annovar 143-10F/variants/143-10F.merged.recal.realn.reSrt.variants.annovar /bubo/nobackup/uppnex/annotations/annovar/humandb/
+# annotate_variation.pl --filter --dbtype ljb_pp2 --buildver hg19 --outfile 143-10F/annotation/143-10F.merged.recal.realn.reSrt.variants.annovar 143-10F/variants/143-10F.merged.recal.realn.reSrt.variants.annovar /bubo/nobackup/uppnex/annotations/annovar/humandb/
+
+
+        my $sbatchFH = myOpenRW("$infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx]");
+        print $sbatchFH returnSbatchScript($infoHR, $paramAR, $cmdAR);
+        close($sbatchFH);
+
+
+# ALTERNATIVE VARIANT CALLING USING MPILEUP- NOT YET IMPLEMENTED
 #        $cpHR->{'outPfx'} = "$infoHR->{'analysis_dirs'}{'variants'}/$infoHR->{'optHR'}{'sample'}.merged.recal.realn.reSrt";
 #        push(@{$cmdAR},
 #samtools mpileup -ugf ~/hg/GRCh37_hg19/GRCh37_hg19_allChr_nl.fa 12-10F/GATK/12-10F.merged.recal.realn.reSrt.bam 2> /dev/null|bcftools view -vcg - 2> /dev/null| vcfutils.pl varFilter -D100 |less -S 2> /dev/null
@@ -481,17 +568,18 @@ sub writeSbatchScripts {
 #           'echo' => 1, 'cmdFN' => "$cpHR->{'infPfx'}.mpileup_1", 'cont' => 0, 'xn' => 2},
 #        );
 
-        my $sbatchFH = myOpenRW("$infoHR->{'analysis_dirs'}{'sbatch'}/$scriptNameAR->[$cIdx]");
-        print $sbatchFH returnSbatchScript($infoHR, $paramAR, $cmdAR);
-        close($sbatchFH);
+
       }
 
-
+      if ( $infoHR->{'optHR'}{'submit'} ) {
+        my $ret = `$infoHR->{'optHR'}{'submitCmd'}`;
+        print "Job submitted, returned:\n$ret\n\n";
+      }
 
     } elsif ( -f $infoHR->{'optHR'}{'fqS'} ) {
-      die "Error: Single end fastq data processing not implemented yet\n";
+      pod2usage("Error: Single end fastq data processing not implemented yet\n");
     } else {
-      die "Error: Cannot find input fastq files\n";
+      pod2usage("Error: Cannot find input fastq files\n");
     }
 
   }
@@ -608,9 +696,12 @@ run_exome_analysis.pl [options]
    --fq1             PE fastq file, direction 1
    --fq2             PE fastq file, direction 2
    --fqS             SE fastq file (not yet implemented)
+   --submit          Submit job to queue
    --shm             Use shared memory (/dev/shm)
 
 At least one fastq file is required. If paired end (PE) data is used, both fq1 and fq2 are required and must match internally.
+
+Single end data processing not yet implemented (and may never be implemented since we always run paired end sequencing) - Sorry!
 
 =cut
 
